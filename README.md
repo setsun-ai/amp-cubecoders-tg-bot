@@ -25,8 +25,9 @@ Jeden plik Pythona, bez zależności spoza biblioteki standardowej.
 - **Maszyna**: alert, gdy bateria laptopa spadnie poniżej progu, gdy CPU się przegrzewa
   albo gdy padnie tunel playit.gg.
 - **Komendy** (tylko dla admina, z menu i klawiaturą):
-  `/online`, `/status`, `/historia [N]`, `/gracz NICK`, `/tydzien`, `/wersja`, `/update`,
-  `/rollback`, `/pomoc`.
+  `/online`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`,
+  `/rollback`, `/help`.
+- **Języki**: polski, English, русский, українська – `/lang`, osobno dla każdego czatu.
 
 Bot czyta logi z `AMP_Logs/AMPLOG_*.log` każdej instancji. Prawdziwe IP graczy widać tylko
 przy bezpośrednim połączeniu; przez tunel (np. playit.gg) wszyscy łączą się z adresu tunelu.

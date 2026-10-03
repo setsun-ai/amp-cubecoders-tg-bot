@@ -1,5 +1,14 @@
 # Zmiany
 
+## 1.1.0
+
+- Języki: polski, angielski, rosyjski i ukraiński. `/lang` pokazuje przyciski, wybór jest
+  zapamiętywany osobno dla każdego czatu; powiadomienia idą w języku czatu admina, menu komend
+  zmienia się razem z językiem. Domyślny język: `BOT_LANG` (domyślnie `pl`).
+- Komendy mają teraz neutralne nazwy: `/history`, `/player`, `/week`, `/version`, `/help`;
+  stare polskie (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) dalej działają.
+- Obcy dostają odmowę w języku swojego Telegrama.
+
 ## 1.0.0
 
 Pierwsze wydanie.

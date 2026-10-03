@@ -5,7 +5,7 @@ Czyta na biezaco AMP_Logs/AMPLOG_*.log kazdej instancji AMP.
 Reguly rozpoznawania graczy bierze z pliku .kvp instancji (Console.UserJoinRegex /
 Console.UserLeaveRegex), Minecraft i dodatki dla Valheima (SteamID) sa wbudowane.
 Do tego: komendy na Telegramie, alert o nowym graczu, smierci, podsumowanie tygodnia,
-zasilanie/bateria, temperatura CPU i tunel playit.gg.
+bateria, temperatura CPU i tunel playit.gg. Jezyki: pl, en, ru, uk (/lang).
 
 Uzycie:
   bot.py              - praca ciagla (uruchamiane przez systemd)
@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -75,6 +75,205 @@ SKIP_MODULES = {"ADSModule"}
 AMP_PREFIX = re.compile(r"^\[\d{1,2}:\d{2}:\d{2}\] \[[^\]]*\]\s*:\s?")
 
 
+# ---------- jezyki ----------
+
+LANGS = {"pl": "🇵🇱 Polski", "en": "🇬🇧 English", "ru": "🇷🇺 Русский", "uk": "🇺🇦 Українська"}
+LANG_ORDER = ("pl", "en", "ru", "uk")
+
+# klucz: (pl, en, ru, uk)
+STRINGS = {
+    "dur_hm": ("{h} h {m} min", "{h} h {m} min", "{h} ч {m} мин", "{h} год {m} хв"),
+    "dur_m": ("{m} min", "{m} min", "{m} мин", "{m} хв"),
+    # gracze
+    "new_player": ("🆕 <b>NOWY GRACZ!</b>", "🆕 <b>NEW PLAYER!</b>", "🆕 <b>НОВЫЙ ИГРОК!</b>",
+                   "🆕 <b>НОВИЙ ГРАВЕЦЬ!</b>"),
+    "joined": ("🟢 <b>{name}</b> wchodzi na serwer", "🟢 <b>{name}</b> joined the server",
+               "🟢 <b>{name}</b> заходит на сервер", "🟢 <b>{name}</b> заходить на сервер"),
+    "left": ("🔴 <b>{name}</b> wychodzi{extra}", "🔴 <b>{name}</b> left{extra}",
+             "🔴 <b>{name}</b> выходит{extra}", "🔴 <b>{name}</b> виходить{extra}"),
+    "online_count": ("👥 Online: {n}", "👥 Online: {n}", "👥 Онлайн: {n}", "👥 Онлайн: {n}"),
+    "playtime": ("⏱ Czas gry: {dur}", "⏱ Play time: {dur}", "⏱ Время в игре: {dur}", "⏱ Час у грі: {dur}"),
+    "at_least": ("co najmniej {dur}", "at least {dur}", "не меньше {dur}", "щонайменше {dur}"),
+    "death": ("💀 <b>{name}</b> ginie ({n}. raz dzisiaj)", "💀 <b>{name}</b> died ({n}× today)",
+              "💀 <b>{name}</b> погибает ({n}-й раз за сегодня)", "💀 <b>{name}</b> гине ({n}-й раз за сьогодні)"),
+    "note_restart": ("restart serwera", "server restart", "перезапуск сервера", "перезапуск сервера"),
+    "note_prestart": ("przed startem bota", "before bot start", "до запуска бота", "до запуску бота"),
+    "note_botrestart": ("bot zrestartowany", "bot restarted", "бот перезапущен", "бот перезапущено"),
+    "in_game": ("w grze", "playing", "в игре", "у грі"),
+    "warn_unknown": (
+        "⚠️ Nie wiem, jak rozpoznać graczy w instancji <b>{inst}</b> ({game}). "
+        "Podeślij linię z logu z wejściem gracza.",
+        "⚠️ I don't know how to detect players on instance <b>{inst}</b> ({game}). "
+        "Send me a log line with a player joining.",
+        "⚠️ Не знаю, как распознавать игроков на инстансе <b>{inst}</b> ({game}). "
+        "Пришли строку из лога со входом игрока.",
+        "⚠️ Не знаю, як розпізнавати гравців на інстансі <b>{inst}</b> ({game}). "
+        "Надішли рядок із логу зі входом гравця."),
+    "unknown_game": ("nieznana gra", "unknown game", "неизвестная игра", "невідома гра"),
+    "new_instance": ("🆕 Nowa instancja: <b>{label}</b>, śledzę graczy.",
+                     "🆕 New instance: <b>{label}</b>, tracking players.",
+                     "🆕 Новый инстанс: <b>{label}</b>, слежу за игроками.",
+                     "🆕 Новий інстанс: <b>{label}</b>, стежу за гравцями."),
+    # start i aktualizacja
+    "startup": ("🤖 Bot AMP {v} działa.", "🤖 AMP bot {v} is running.", "🤖 Бот AMP {v} работает.",
+                "🤖 Бот AMP {v} працює."),
+    "updated": ("✅ Zaktualizowano: {old} → <b>{v}</b>", "✅ Updated: {old} → <b>{v}</b>",
+                "✅ Обновлено: {old} → <b>{v}</b>", "✅ Оновлено: {old} → <b>{v}</b>"),
+    "tracking": ("Śledzę: {list}", "Tracking: {list}", "Слежу: {list}", "Стежу: {list}"),
+    "nothing": ("nic", "nothing", "ничего", "нічого"),
+    "commands_hint": ("Komendy: /help", "Commands: /help", "Команды: /help", "Команди: /help"),
+    "test_msg": ("✅ Test: bot AMP ma połączenie z Telegramem.", "✅ Test: the AMP bot can reach Telegram.",
+                 "✅ Тест: бот AMP на связи с Telegram.", "✅ Тест: бот AMP на зв'язку з Telegram."),
+    "version": ("🤖 Wersja: <b>{v}</b>\n📦 Najnowsza na GitHubie: {latest}",
+                "🤖 Version: <b>{v}</b>\n📦 Latest on GitHub: {latest}",
+                "🤖 Версия: <b>{v}</b>\n📦 Последняя на GitHub: {latest}",
+                "🤖 Версія: <b>{v}</b>\n📦 Остання на GitHub: {latest}"),
+    "check_failed": ("nie udało się sprawdzić ({err})", "check failed ({err})", "не удалось проверить ({err})",
+                     "не вдалося перевірити ({err})"),
+    "upd_checking": ("🔎 Sprawdzam GitHuba…", "🔎 Checking GitHub…", "🔎 Проверяю GitHub…", "🔎 Перевіряю GitHub…"),
+    "upd_latest": ("✅ Masz najnowszą wersję ({v}).", "✅ You have the latest version ({v}).",
+                   "✅ У тебя последняя версия ({v}).", "✅ У тебе остання версія ({v})."),
+    "upd_downloading": ("⬇️ Pobieram i testuję {tag}…", "⬇️ Downloading and testing {tag}…",
+                        "⬇️ Скачиваю и тестирую {tag}…", "⬇️ Завантажую й тестую {tag}…"),
+    "upd_failed": ("❌ Nowa wersja nie przeszła testu, zostaję przy {v}.",
+                   "❌ The new version failed the test, staying on {v}.",
+                   "❌ Новая версия не прошла тест, остаюсь на {v}.",
+                   "❌ Нова версія не пройшла тест, лишаюся на {v}."),
+    "upd_restart": ("♻️ Zainstalowano {tag}, restartuję się (ok. 10 s)…",
+                    "♻️ Installed {tag}, restarting (about 10 s)…",
+                    "♻️ Установлено {tag}, перезапускаюсь (около 10 с)…",
+                    "♻️ Встановлено {tag}, перезапускаюся (близько 10 с)…"),
+    "rb_none": ("Nie ma poprzedniej wersji do przywrócenia.", "There is no previous version to restore.",
+                "Нет предыдущей версии для восстановления.", "Немає попередньої версії для відновлення."),
+    "rb_restart": ("⏪ Przywracam poprzednią wersję, restartuję się (ok. 10 s)…",
+                   "⏪ Restoring the previous version, restarting (about 10 s)…",
+                   "⏪ Возвращаю предыдущую версию, перезапускаюсь (около 10 с)…",
+                   "⏪ Повертаю попередню версію, перезапускаюся (близько 10 с)…"),
+    # laptop
+    "no_playit": ("⚠️ Nie znalazłem playit (usługa '{svc}' ani proces) – nie pilnuję tunelu.",
+                  "⚠️ playit not found (no '{svc}' service or process) – not watching the tunnel.",
+                  "⚠️ Не нашёл playit (ни службы '{svc}', ни процесса) – туннель не отслеживаю.",
+                  "⚠️ Не знайшов playit (ні служби '{svc}', ні процесу) – тунель не відстежую."),
+    "bat_low": ("🪫 <b>Bateria {bat}%</b> – spadła poniżej {th}%. Sprawdź zasilacz.",
+                "🪫 <b>Battery {bat}%</b> – dropped below {th}%. Check the charger.",
+                "🪫 <b>Батарея {bat}%</b> – упала ниже {th}%. Проверь зарядку.",
+                "🪫 <b>Батарея {bat}%</b> – впала нижче {th}%. Перевір зарядку."),
+    "bat_ok": ("🔋 Bateria wróciła do {bat}%.", "🔋 Battery back at {bat}%.", "🔋 Батарея снова {bat}%.",
+               "🔋 Батарея знову {bat}%."),
+    "temp_hot": ("🌡 <b>CPU {t}°C</b> – laptop się grzeje!", "🌡 <b>CPU {t}°C</b> – the laptop is overheating!",
+                 "🌡 <b>CPU {t}°C</b> – ноутбук перегревается!", "🌡 <b>CPU {t}°C</b> – ноутбук перегрівається!"),
+    "temp_ok": ("✅ Temperatura CPU spadła do {t}°C.", "✅ CPU temperature down to {t}°C.",
+                "✅ Температура CPU снизилась до {t}°C.", "✅ Температура CPU знизилася до {t}°C."),
+    "playit_down": ("❌ <b>Tunel playit.gg nie działa!</b> Serwery chodzą, ale nikt z zewnątrz nie wejdzie.",
+                    "❌ <b>The playit.gg tunnel is down!</b> Servers are running, but nobody from outside can join.",
+                    "❌ <b>Туннель playit.gg не работает!</b> Серверы работают, но снаружи никто не зайдёт.",
+                    "❌ <b>Тунель playit.gg не працює!</b> Сервери працюють, але ззовні ніхто не зайде."),
+    "playit_up": ("✅ Tunel playit.gg znowu działa.", "✅ The playit.gg tunnel is back up.",
+                  "✅ Туннель playit.gg снова работает.", "✅ Тунель playit.gg знову працює."),
+    "h_title": ("🖥 <b>Laptop</b>", "🖥 <b>Laptop</b>", "🖥 <b>Ноутбук</b>", "🖥 <b>Ноутбук</b>"),
+    "h_power": ("Zasilanie: {src}", "Power: {src}", "Питание: {src}", "Живлення: {src}"),
+    "h_mains": ("sieć 🔌", "mains 🔌", "сеть 🔌", "мережа 🔌"),
+    "h_on_battery": ("BATERIA ⚡", "BATTERY ⚡", "БАТАРЕЯ ⚡", "БАТАРЕЯ ⚡"),
+    "h_bat": (", bateria {bat}%", ", battery {bat}%", ", батарея {bat}%", ", батарея {bat}%"),
+    "h_nobat": (", brak baterii", ", no battery", ", нет батареи", ", немає батареї"),
+    "h_ram": ("RAM: {used} / {total} GB", "RAM: {used} / {total} GB", "RAM: {used} / {total} ГБ",
+              "RAM: {used} / {total} ГБ"),
+    "h_disk": ("Dysk /: {pct}% zajęte, wolne {free} GB", "Disk /: {pct}% used, {free} GB free",
+               "Диск /: занято {pct}%, свободно {free} ГБ", "Диск /: зайнято {pct}%, вільно {free} ГБ"),
+    "h_load": ("Obciążenie: {load}", "Load: {load}", "Нагрузка: {load}", "Навантаження: {load}"),
+    "h_uptime": ("Uptime: {dur}", "Uptime: {dur}", "Аптайм: {dur}", "Аптайм: {dur}"),
+    "h_playit_ok": ("playit: działa ✅", "playit: running ✅", "playit: работает ✅", "playit: працює ✅"),
+    "h_playit_down": ("playit: NIE DZIAŁA ❌", "playit: DOWN ❌", "playit: НЕ РАБОТАЕТ ❌", "playit: НЕ ПРАЦЮЄ ❌"),
+    "h_playit_none": ("playit: nie znaleziono", "playit: not found", "playit: не найден", "playit: не знайдено"),
+    # podsumowanie tygodnia
+    "w_title": ("📊 <b>Podsumowanie {days} dni</b>", "📊 <b>Last {days} days</b>", "📊 <b>Итоги за {days} дней</b>",
+                "📊 <b>Підсумки за {days} днів</b>"),
+    "w_nobody": ("Nikt nie grał. 😴", "Nobody played. 😴", "Никто не играл. 😴", "Ніхто не грав. 😴"),
+    "w_game": ("🎮 <b>{game}</b>: {dur}, graczy: {players}, sesji: {sessions}",
+               "🎮 <b>{game}</b>: {dur}, players: {players}, sessions: {sessions}",
+               "🎮 <b>{game}</b>: {dur}, игроков: {players}, сессий: {sessions}",
+               "🎮 <b>{game}</b>: {dur}, гравців: {players}, сесій: {sessions}"),
+    "w_top": ("🏆 <b>Najwięcej grali:</b>", "🏆 <b>Top players:</b>", "🏆 <b>Больше всех играли:</b>",
+              "🏆 <b>Найбільше грали:</b>"),
+    "w_peak": ("🕗 Największy ruch: {hours}", "🕗 Busiest hour: {hours}", "🕗 Пик активности: {hours}",
+               "🕗 Пік активності: {hours}"),
+    "w_deaths": ("💀 Najczęściej ginie: {name} ({n}×)", "💀 Dies the most: {name} ({n}×)",
+                 "💀 Чаще всех погибает: {name} ({n}×)", "💀 Найчастіше гине: {name} ({n}×)"),
+    # komendy
+    "online_title": ("👥 <b>Online</b>", "👥 <b>Online</b>", "👥 <b>Онлайн</b>", "👥 <b>Онлайн</b>"),
+    "nobody_online": ("Nikt teraz nie gra. 😴", "Nobody is playing right now. 😴", "Сейчас никто не играет. 😴",
+                      "Зараз ніхто не грає. 😴"),
+    "no_sessions": ("Brak sesji.", "No sessions.", "Нет сессий.", "Немає сесій."),
+    "hist_title": ("📜 <b>Ostatnie sesje ({n})</b>", "📜 <b>Last sessions ({n})</b>",
+                   "📜 <b>Последние сессии ({n})</b>", "📜 <b>Останні сесії ({n})</b>"),
+    "player_usage": ("Użycie: /player NICK (albo SteamID / UUID)", "Usage: /player NAME (or SteamID / UUID)",
+                     "Использование: /player НИК (или SteamID / UUID)",
+                     "Використання: /player НІК (або SteamID / UUID)"),
+    "player_unknown": ("Nie znam gracza „{q}”.", "I don't know player “{q}”.", "Не знаю игрока «{q}».",
+                       "Не знаю гравця «{q}»."),
+    "p_total": ("⏱ Łącznie: {dur}, sesje: {n}", "⏱ Total: {dur}, sessions: {n}", "⏱ Всего: {dur}, сессий: {n}",
+                "⏱ Усього: {dur}, сесій: {n}"),
+    "p_seen": ("📅 Pierwszy raz: {first}, ostatnio: {last}", "📅 First seen: {first}, last: {last}",
+               "📅 Впервые: {first}, последний раз: {last}", "📅 Уперше: {first}, востаннє: {last}"),
+    "stranger": ("👤 Ktoś pisze do bota: {who} (ID <code>{id}</code>)",
+                 "👤 Someone wrote to the bot: {who} (ID <code>{id}</code>)",
+                 "👤 Боту пишет: {who} (ID <code>{id}</code>)", "👤 Боту пише: {who} (ID <code>{id}</code>)"),
+    "private": ("⛔ To prywatny bot.", "⛔ This is a private bot.", "⛔ Это приватный бот.", "⛔ Це приватний бот."),
+    "error": ("❌ Coś poszło nie tak, szczegóły w logu bota.", "❌ Something went wrong, see the bot log.",
+              "❌ Что-то пошло не так, подробности в логе бота.", "❌ Щось пішло не так, подробиці в лозі бота."),
+    "lang_choose": ("🌐 Wybierz język:", "🌐 Choose a language:", "🌐 Выбери язык:", "🌐 Обери мову:"),
+    "lang_set": ("✅ Język: {name}", "✅ Language: {name}", "✅ Язык: {name}", "✅ Мова: {name}"),
+    "help_title": ("🤖 <b>Bot AMP {v}</b> – komendy:", "🤖 <b>AMP bot {v}</b> – commands:",
+                   "🤖 <b>Бот AMP {v}</b> – команды:", "🤖 <b>Бот AMP {v}</b> – команди:"),
+    # opisy komend (menu i /help)
+    "c_online": ("Kto teraz gra", "Who's playing now", "Кто сейчас играет", "Хто зараз грає"),
+    "c_status": ("Stan laptopa i serwerów", "Laptop and server status", "Состояние ноутбука и серверов",
+                 "Стан ноутбука і серверів"),
+    "c_history": ("Ostatnie sesje graczy", "Recent player sessions", "Последние сессии игроков",
+                  "Останні сесії гравців"),
+    "c_player": ("Historia gracza (nick, SteamID, UUID)", "Player history (name, SteamID, UUID)",
+                 "История игрока (ник, SteamID, UUID)", "Історія гравця (нік, SteamID, UUID)"),
+    "c_week": ("Podsumowanie 7 dni", "7-day summary", "Итоги за 7 дней", "Підсумки за 7 днів"),
+    "c_lang": ("Język / Language", "Language", "Язык / Language", "Мова / Language"),
+    "c_version": ("Wersja bota", "Bot version", "Версия бота", "Версія бота"),
+    "c_update": ("Aktualizacja z GitHuba", "Update from GitHub", "Обновление с GitHub", "Оновлення з GitHub"),
+    "c_rollback": ("Powrót do poprzedniej wersji", "Back to the previous version", "Вернуть предыдущую версию",
+                   "Повернути попередню версію"),
+    "c_help": ("Lista komend", "Command list", "Список команд", "Список команд"),
+}
+
+
+def norm_lang(code):
+    code = (code or "").lower()[:2]
+    code = "uk" if code == "ua" else code
+    return code if code in LANGS else None
+
+
+DEFAULT_LANG = norm_lang(os.environ.get("BOT_LANG")) or "pl"
+CHAT_LANGS = {}  # str(chat_id) -> jezyk, wczytywane z bazy
+
+
+def lang_for(chat_id=None):
+    return CHAT_LANGS.get(str(chat_id or CHAT_ID), DEFAULT_LANG)
+
+
+def t(key, lang=None, **kw):
+    text = STRINGS[key][LANG_ORDER.index(lang or lang_for())]
+    return text.format(**kw) if kw else text
+
+
+# notatki w bazie: kody, a dla starych wpisow z 1.0.0 polskie teksty
+NOTE_KEYS = {"restart": "note_restart", "restart serwera": "note_restart",
+             "prestart": "note_prestart", "przed startem bota": "note_prestart",
+             "botrestart": "note_botrestart", "bot zrestartowany": "note_botrestart"}
+
+
+def note_text(note, lang=None):
+    return t(NOTE_KEYS[note], lang) if note in NOTE_KEYS else note
+
+
+# ---------- drobiazgi ----------
+
 def log(msg):
     print(msg, flush=True)
 
@@ -83,14 +282,14 @@ def esc(s):
     return html.escape(str(s), quote=False)
 
 
-def fmt_duration(seconds):
+def fmt_duration(seconds, lang=None):
     minutes = max(0, int(seconds // 60))
     h, m = divmod(minutes, 60)
-    return f"{h} h {m} min" if h else f"{m} min"
+    return t("dur_hm", lang, h=h, m=m) if h else t("dur_m", lang, m=m)
 
 
-def ts(t):
-    return datetime.fromtimestamp(t).strftime("%Y-%m-%d %H:%M") if t else "-"
+def ts(stamp):
+    return datetime.fromtimestamp(stamp).strftime("%Y-%m-%d %H:%M") if stamp else "-"
 
 
 def read(path, default=None):
@@ -347,15 +546,15 @@ class Instance:
             (self.name, self.game, name, userid, steamid, ip, now))
         self.db.commit()
         self.online[key] = {"name": name, "userid": userid, "steamid": steamid, "since": now, "row": cur.lastrowid}
-        lines = ["🆕 <b>NOWY GRACZ!</b>"] if new_player else []
-        lines += [f"🟢 <b>{esc(name)}</b> wchodzi na serwer", f"🎮 {esc(self.label)}"]
+        lines = [t("new_player")] if new_player else []
+        lines += [t("joined", name=esc(name)), f"🎮 {esc(self.label)}"]
         if steamid:
             lines.append(f'🆔 SteamID: <a href="https://steamcommunity.com/profiles/{steamid}">{steamid}</a>')
         elif userid and self.game == "Minecraft":
             lines.append(f"🆔 UUID: <code>{esc(userid)}</code>")
         if ip:
             lines.append(f"🌍 IP: <code>{esc(ip)}</code>")
-        lines.append(f"👥 Online: {len(self.online)}")
+        lines.append(t("online_count", n=len(self.online)))
         send("\n".join(lines))
 
     def on_leave(self, name=None, userid=None, steamid=None, note=None):
@@ -375,10 +574,12 @@ class Instance:
         now = int(time.time())
         self.db.execute("UPDATE sessions SET left=?, note=? WHERE id=?", (now, note, p["row"]))
         self.db.commit()
-        extra = f" ({note})" if note else ""
-        atleast = "co najmniej " if p.get("partial") else ""
-        send(f"🔴 <b>{esc(p['name'])}</b> wychodzi{esc(extra)}\n🎮 {esc(self.label)}\n"
-             f"⏱ Czas gry: {atleast}{fmt_duration(now - p['since'])}\n👥 Online: {len(self.online)}")
+        extra = f" ({esc(note_text(note))})" if note else ""
+        dur = fmt_duration(now - p["since"])
+        if p.get("partial"):
+            dur = t("at_least", dur=dur)
+        send("\n".join([t("left", name=esc(p["name"]), extra=extra), f"🎮 {esc(self.label)}",
+                        t("playtime", dur=dur), t("online_count", n=len(self.online))]))
 
     def finish_replay(self):
         """Gracze, ktorzy weszli przed startem bota: sesja liczona od teraz, bez powiadomienia."""
@@ -388,8 +589,7 @@ class Instance:
             cur = self.db.execute(
                 "INSERT INTO sessions(instance, game, username, userid, steamid, ip, joined, note) "
                 "VALUES (?,?,?,?,?,?,?,?)",
-                (self.name, self.game, p["name"], p["userid"], p["steamid"], p.get("ip"), now,
-                 "przed startem bota"))
+                (self.name, self.game, p["name"], p["userid"], p["steamid"], p.get("ip"), now, "prestart"))
             p.update(since=now, row=cur.lastrowid, partial=True)
         self.db.commit()
         if self.online:
@@ -405,7 +605,7 @@ class Instance:
         midnight = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
         n = self.db.execute("SELECT COUNT(*) FROM deaths WHERE username=? AND game=? AND ts>=?",
                             (name, self.game, midnight)).fetchone()[0]
-        send(f"💀 <b>{esc(name)}</b> ginie ({n}. raz dzisiaj)\n🎮 {esc(self.label)}")
+        send(t("death", name=esc(name), n=n) + f"\n🎮 {esc(self.label)}")
 
     def newest_log(self):
         files = glob.glob(os.path.join(self.path, "AMP_Logs", "AMPLOG_*.log"))
@@ -421,7 +621,7 @@ class Instance:
         if newest != self.logfile:
             if self.logfile is not None:  # nowy plik logu = restart instancji
                 for p in list(self.online.values()):
-                    self.on_leave(name=p["name"], note="restart serwera")
+                    self.on_leave(name=p["name"], note="restart")
                 self.rules = detect_rules(self.path)[2] or self.rules
             self.logfile, self.buf, self.pos = newest, b"", 0
             # przy starcie bota czytamy biezacy log po cichu, zeby wiedziec, kto juz gra
@@ -467,7 +667,7 @@ def open_db(readonly=False):
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
     """)
     # sesje niezamkniete przy poprzednim wylaczeniu bota
-    db.execute("UPDATE sessions SET note='bot zrestartowany' WHERE left IS NULL AND note IS NULL")
+    db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
     db.commit()
     return db
 
@@ -482,16 +682,22 @@ def meta_set(db, key, value):
     db.commit()
 
 
+def load_langs(db):
+    CHAT_LANGS.clear()
+    for key, value in db.execute("SELECT key, value FROM meta WHERE key LIKE 'lang:%'"):
+        if norm_lang(value):
+            CHAT_LANGS[key[len("lang:"):]] = norm_lang(value)
+
+
 def warn_once(db, inst):
     if db.execute("SELECT 1 FROM warned WHERE instance=?", (inst.name,)).fetchone():
         return
     db.execute("INSERT INTO warned(instance) VALUES (?)", (inst.name,))
     db.commit()
-    send(f"⚠️ Nie wiem, jak rozpoznać graczy w instancji <b>{esc(inst.name)}</b> "
-         f"({esc(inst.game or 'nieznana gra')}). Podeślij linię z logu z wejściem gracza.")
+    send(t("warn_unknown", inst=esc(inst.name), game=esc(inst.game or t("unknown_game"))))
 
 
-# ---------- laptop: zasilanie, temperatura, playit ----------
+# ---------- laptop: bateria, temperatura, playit ----------
 
 def power_state():
     """(zasilacz_podlaczony, bateria_procent) - None, gdy brak danych."""
@@ -558,37 +764,37 @@ def playit_ok(mode):
     return None
 
 
-def host_report():
+def host_report(lang=None):
     ac, bat = power_state()
     temp = cpu_temp()
     lines = []
     if ac is not None or bat is not None:
-        src = "sieć 🔌" if ac else ("BATERIA ⚡" if ac is False else "?")
-        lines.append(f"Zasilanie: {src}" + (f", bateria {bat}%" if bat is not None else ", brak baterii"))
+        src = t("h_mains", lang) if ac else (t("h_on_battery", lang) if ac is False else "?")
+        src += t("h_bat", lang, bat=bat) if bat is not None else t("h_nobat", lang)
+        lines.append(t("h_power", lang, src=src))
     if temp is not None:
         lines.append(f"CPU: {temp:.0f}°C")
     try:
         mem = dict(row.split(":", 1) for row in open("/proc/meminfo").read().splitlines())
         total = int(mem["MemTotal"].split()[0]) / 1048576
         avail = int(mem["MemAvailable"].split()[0]) / 1048576
-        lines.append(f"RAM: {total - avail:.1f} / {total:.1f} GB")
+        lines.append(t("h_ram", lang, used=f"{total - avail:.1f}", total=f"{total:.1f}"))
     except (OSError, KeyError, ValueError):
         pass
     try:
         du = shutil.disk_usage("/")
-        lines.append(f"Dysk /: {du.used * 100 // du.total}% zajęte, wolne {du.free / 1e9:.0f} GB")
+        lines.append(t("h_disk", lang, pct=du.used * 100 // du.total, free=f"{du.free / 1e9:.0f}"))
     except OSError:
         pass
     try:
-        lines.append(f"Obciążenie: {os.getloadavg()[0]:.2f}")
+        lines.append(t("h_load", lang, load=f"{os.getloadavg()[0]:.2f}"))
     except (OSError, AttributeError):
         pass
     up = read("/proc/uptime")
     if up:
-        lines.append(f"Uptime: {fmt_duration(float(up.split()[0]))}")
-    mode = playit_mode()
-    ok = playit_ok(mode)
-    lines.append("playit: " + ("działa ✅" if ok else "NIE DZIAŁA ❌" if ok is False else "nie znaleziono"))
+        lines.append(t("h_uptime", lang, dur=fmt_duration(float(up.split()[0]), lang)))
+    ok = playit_ok(playit_mode())
+    lines.append(t("h_playit_ok" if ok else "h_playit_down" if ok is False else "h_playit_none", lang))
     return "\n".join(lines)
 
 
@@ -601,10 +807,7 @@ class HostMonitor:
         self.playit_down = False
 
     def startup_notes(self):
-        notes = []
-        if self.playit_mode is None:
-            notes.append(f"⚠️ Nie znalazłem playit (usługa '{PLAYIT_SERVICE}' ani proces) – nie pilnuję tunelu.")
-        return notes
+        return [t("no_playit", svc=PLAYIT_SERVICE)] if self.playit_mode is None else []
 
     def check(self):
         # laptop stoi na zasilaczu z limitem ladowania 50%, wiec spadek ponizej progu = cos nie tak
@@ -612,19 +815,19 @@ class HostMonitor:
         if bat is not None and BATTERY_WARN:
             if bat < BATTERY_WARN and not self.bat_alerted:
                 self.bat_alerted = True
-                send(f"🪫 <b>Bateria {bat}%</b> – spadła poniżej {BATTERY_WARN}%. Sprawdź zasilacz.")
+                send(t("bat_low", bat=bat, th=BATTERY_WARN))
             elif bat >= BATTERY_WARN + 3 and self.bat_alerted:
                 self.bat_alerted = False
-                send(f"🔋 Bateria wróciła do {bat}%.")
+                send(t("bat_ok", bat=bat))
 
         temp = cpu_temp()
         if temp is not None:
             if temp >= TEMP_ALERT and not self.temp_alerted:
                 self.temp_alerted = True
-                send(f"🌡 <b>CPU {temp:.0f}°C</b> – laptop się grzeje!")
+                send(t("temp_hot", t=f"{temp:.0f}"))
             elif temp < TEMP_ALERT - 10 and self.temp_alerted:
                 self.temp_alerted = False
-                send(f"✅ Temperatura CPU spadła do {temp:.0f}°C.")
+                send(t("temp_ok", t=f"{temp:.0f}"))
 
         if self.playit_mode is None:
             return
@@ -633,12 +836,12 @@ class HostMonitor:
             self.playit_fails += 1
             if self.playit_fails >= 2 and not self.playit_down:  # 2 kolejne sprawdzenia = ok. minuta
                 self.playit_down = True
-                send("❌ <b>Tunel playit.gg nie działa!</b> Serwery chodzą, ale nikt z zewnątrz nie wejdzie.")
+                send(t("playit_down"))
         elif ok:
             self.playit_fails = 0
             if self.playit_down:
                 self.playit_down = False
-                send("✅ Tunel playit.gg znowu działa.")
+                send(t("playit_up"))
 
 
 # ---------- statystyki ----------
@@ -648,13 +851,13 @@ def player_key(row):
     return steamid or (userid if game == "Minecraft" else None) or f"{game}:{username}"
 
 
-def weekly_summary(db, days=7):
+def weekly_summary(db, days=7, lang=None):
     now = int(time.time())
     since = now - days * 86400
     rows = db.execute("SELECT game, username, steamid, userid, joined, left FROM sessions "
                       "WHERE left IS NOT NULL AND left > ?", (since,)).fetchall()
     if not rows:
-        return f"📊 <b>Podsumowanie {days} dni</b>\nNikt nie grał. 😴"
+        return t("w_title", lang, days=days) + "\n" + t("w_nobody", lang)
     per_game = collections.defaultdict(lambda: [0, set(), 0])
     per_player = collections.defaultdict(int)
     names = {}
@@ -669,25 +872,26 @@ def weekly_summary(db, days=7):
         g[2] += 1
         per_player[key] += dur
         names[key] = user
-        t = start
-        while t < left:  # rozklad czasu gry na godziny doby
-            nxt = min(left, (t // 3600 + 1) * 3600)
-            per_hour[datetime.fromtimestamp(t).hour] += nxt - t
-            t = nxt
-    lines = [f"📊 <b>Podsumowanie {days} dni</b>", ""]
+        moment = start
+        while moment < left:  # rozklad czasu gry na godziny doby
+            nxt = min(left, (moment // 3600 + 1) * 3600)
+            per_hour[datetime.fromtimestamp(moment).hour] += nxt - moment
+            moment = nxt
+    lines = [t("w_title", lang, days=days), ""]
     for game, (dur, players, sessions) in sorted(per_game.items(), key=lambda x: -x[1][0]):
-        lines.append(f"🎮 <b>{esc(game)}</b>: {fmt_duration(dur)}, graczy: {len(players)}, sesji: {sessions}")
-    lines += ["", "🏆 <b>Najwięcej grali:</b>"]
+        lines.append(t("w_game", lang, game=esc(game), dur=fmt_duration(dur, lang), players=len(players),
+                       sessions=sessions))
+    lines += ["", t("w_top", lang)]
     medals = ["🥇", "🥈", "🥉", "4.", "5."]
     for medal, (key, dur) in zip(medals, sorted(per_player.items(), key=lambda x: -x[1])[:5], strict=False):
-        lines.append(f"{medal} {esc(names[key])} – {fmt_duration(dur)}")
+        lines.append(f"{medal} {esc(names[key])} – {fmt_duration(dur, lang)}")
     if per_hour:
         h = per_hour.most_common(1)[0][0]
-        lines += ["", f"🕗 Największy ruch: {h:02d}:00–{(h + 1) % 24:02d}:00"]
+        lines += ["", t("w_peak", lang, hours=f"{h:02d}:00–{(h + 1) % 24:02d}:00")]
     deaths = db.execute("SELECT username, COUNT(*) c FROM deaths WHERE ts > ? GROUP BY username "
                         "ORDER BY c DESC LIMIT 1", (since,)).fetchone()
     if deaths:
-        lines.append(f"💀 Najczęściej ginie: {esc(deaths[0])} ({deaths[1]}×)")
+        lines.append(t("w_deaths", lang, name=esc(deaths[0]), n=deaths[1]))
     return "\n".join(lines)
 
 
@@ -704,33 +908,32 @@ def maybe_weekly(db):
 
 # ---------- komendy na Telegramie ----------
 
-# (komenda, opis w menu Telegrama, opis w /pomoc)
-COMMANDS = [
-    ("online", "Kto teraz gra", "kto teraz gra"),
-    ("status", "Stan laptopa i serwerów", "stan laptopa i serwerów"),
-    ("historia", "Ostatnie sesje graczy", "/historia [N] – ostatnie sesje (domyślnie 15)"),
-    ("gracz", "Historia gracza: /gracz NICK", "/gracz NICK – historia gracza (nick, SteamID albo UUID)"),
-    ("tydzien", "Podsumowanie 7 dni", "podsumowanie ostatnich 7 dni"),
-    ("wersja", "Wersja bota", "wersja bota i najnowsza dostępna"),
-    ("update", "Aktualizacja bota z GitHuba", "aktualizacja do najnowszej wersji"),
-    ("rollback", "Powrót do poprzedniej wersji", "powrót do poprzedniej wersji bota"),
-    ("pomoc", "Lista komend", "ta lista"),
-]
-HELP = f"🤖 <b>Bot AMP {VERSION}</b> – komendy:\n" + "\n".join(
-    esc(desc) if desc.startswith("/") else f"/{cmd} – {esc(desc)}" for cmd, _, desc in COMMANDS)
-KEYBOARD = {"keyboard": [["/online", "/status"], ["/historia", "/tydzien"]], "resize_keyboard": True,
+# (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
+COMMANDS = [("online", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"), ("week", ""),
+            ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
+# stare polskie nazwy z 1.0.0 dalej dzialaja
+ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
+           "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang"}
+KEYBOARD = {"keyboard": [["/online", "/status"], ["/history", "/week"]], "resize_keyboard": True,
             "is_persistent": True}
+LANG_BUTTONS = {"inline_keyboard": [[{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("pl", "en")],
+                                    [{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("ru", "uk")]]}
 
 
-def set_menu():
-    """Menu komend (przycisk 'Menu' w Telegramie) widoczne tylko na czatach adminow."""
-    commands = json.dumps([{"command": c, "description": d} for c, d, _ in COMMANDS])
-    for admin in ADMINS:
-        try:
-            tg_api("setMyCommands", {"commands": commands,
-                                     "scope": json.dumps({"type": "chat", "chat_id": admin})})
-        except Exception as e:
-            log(f"setMyCommands: {getattr(e, 'code', type(e).__name__)}")
+def help_text(lang):
+    lines = [t("help_title", lang, v=VERSION)]
+    lines += [f"/{cmd}{esc(args)} – {t('c_' + cmd, lang)}" for cmd, args in COMMANDS]
+    return "\n".join(lines)
+
+
+def set_menu(chat_id):
+    """Menu komend (przycisk 'Menu' w Telegramie) na czacie admina, w jego jezyku."""
+    lang = lang_for(chat_id)
+    commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in COMMANDS])
+    try:
+        tg_api("setMyCommands", {"commands": commands, "scope": json.dumps({"type": "chat", "chat_id": chat_id})})
+    except Exception as e:
+        log(f"setMyCommands: {getattr(e, 'code', type(e).__name__)}")
 
 
 # ---------- aktualizacja z GitHuba ----------
@@ -778,10 +981,13 @@ def selftest():
     MinecraftRules().feed("[12:00:00] [Server thread/INFO]: Steve joined the game", sample)
     if events != ["Steve"]:
         raise SystemExit("parser Minecrafta nie dziala")
+    for lang in LANG_ORDER:  # wszystkie teksty daja sie sformatowac w kazdym jezyku
+        help_text(lang)
+        fmt_duration(3700, lang)
     print(f"OK {VERSION}")
 
 
-def cmd_online(instances):
+def cmd_online(instances, lang=None):
     now = time.time()
     lines = []
     for inst in instances.values():
@@ -790,34 +996,34 @@ def cmd_online(instances):
         players = sorted(inst.online.values(), key=lambda p: p["since"])
         if players:
             lines.append(f"🎮 <b>{esc(inst.label)}</b> ({len(players)})")
-            lines += [f"  • {esc(p['name'])} – {fmt_duration(now - p['since'])}" for p in players]
-    return "\n".join(lines) if lines else "Nikt teraz nie gra. 😴"
+            lines += [f"  • {esc(p['name'])} – {fmt_duration(now - p['since'], lang)}" for p in players]
+    return "\n".join(lines) if lines else t("nobody_online", lang)
 
 
-def format_sessions(rows):
+def format_sessions(rows, lang=None):
     out = []
     for game, user, _sid, _uid, joined, left, note in rows:
-        dur = fmt_duration(left - joined) if left else (note or "w grze")
+        dur = fmt_duration(left - joined, lang) if left else (note_text(note, lang) or t("in_game", lang))
         out.append(f"{ts(joined)[5:]} {game[:9]:<9} {user[:16]:<16} {dur}")
-    return "<pre>" + esc("\n".join(out)) + "</pre>" if out else "Brak sesji."
+    return "<pre>" + esc("\n".join(out)) + "</pre>" if out else t("no_sessions", lang)
 
 
-def cmd_historia(db, args):
+def cmd_history(db, args, lang=None):
     n = min(int(args[0]), 50) if args and args[0].isdigit() else 15
     rows = db.execute("SELECT game, username, steamid, userid, joined, left, note FROM sessions "
                       "ORDER BY joined DESC LIMIT ?", (n,)).fetchall()
-    return f"📜 <b>Ostatnie {n} sesji</b>\n" + format_sessions(rows)
+    return t("hist_title", lang, n=len(rows)) + "\n" + format_sessions(rows, lang)
 
 
-def cmd_gracz(db, args):
+def cmd_player(db, args, lang=None):
     if not args:
-        return "Użycie: /gracz NICK (albo SteamID / UUID)"
+        return t("player_usage", lang)
     q = " ".join(args)
     rows = db.execute("SELECT game, username, steamid, userid, joined, left, note FROM sessions "
                       "WHERE username LIKE ? OR steamid=? OR userid=? ORDER BY joined DESC",
                       (f"%{q}%", q, q)).fetchall()
     if not rows:
-        return f"Nie znam gracza „{esc(q)}”."
+        return t("player_unknown", lang, q=esc(q))
     total = sum(r[5] - r[4] for r in rows if r[5])
     names = sorted({r[1] for r in rows})
     sids = sorted({r[2] for r in rows if r[2]})
@@ -826,18 +1032,19 @@ def cmd_gracz(db, args):
     lines = [f"👤 <b>{esc(', '.join(names))}</b>"]
     lines += [f'🆔 SteamID: <a href="https://steamcommunity.com/profiles/{s}">{s}</a>' for s in sids]
     lines += [f"🆔 UUID: <code>{esc(u)}</code>" for u in uuids]
-    lines += [f"⏱ Łącznie: {fmt_duration(total)} w {len(rows)} sesjach",
+    lines += [t("p_total", lang, dur=fmt_duration(total, lang), n=len(rows)),
               "🎮 " + ", ".join(f"{esc(g)} ({c})" for g, c in games.most_common()),
-              f"📅 Pierwszy raz: {ts(rows[-1][4])}, ostatnio: {ts(rows[0][4])}",
-              "", format_sessions(rows[:10])]
+              t("p_seen", lang, first=ts(rows[-1][4]), last=ts(rows[0][4])),
+              "", format_sessions(rows[:10], lang)]
     return "\n".join(lines)
 
 
-def cmd_status(instances):
+def cmd_status(instances, lang=None):
     tracked = [i.label for i in instances.values() if i.status == "ok"]
     online = sum(len(i.online) for i in instances.values())
-    return (f"🖥 <b>Laptop</b>\n{esc(host_report())}\n\n"
-            f"🎮 Śledzę: {esc(', '.join(tracked) or 'nic')}\n👥 Online: {online}")
+    return "\n".join([t("h_title", lang), esc(host_report(lang)), "",
+                      "🎮 " + t("tracking", lang, list=esc(", ".join(tracked) or t("nothing", lang))),
+                      t("online_count", lang, n=online)])
 
 
 class Commands:
@@ -851,7 +1058,7 @@ class Commands:
         if not TOKEN:
             time.sleep(timeout)
             return
-        params = {"timeout": timeout, "allowed_updates": json.dumps(["message"])}
+        params = {"timeout": timeout, "allowed_updates": json.dumps(["message", "callback_query"])}
         if self.offset is not None:
             params["offset"] = self.offset
         try:
@@ -863,12 +1070,16 @@ class Commands:
         for upd in res.get("result", []):
             self.offset = upd["update_id"] + 1
             msg = upd.get("message")
-            if msg and msg.get("text", "").startswith("/") and time.time() - msg.get("date", 0) < 120:
-                try:
+            try:
+                if upd.get("callback_query"):
+                    self.handle_callback(upd["callback_query"])
+                elif msg and msg.get("text", "").startswith("/") and time.time() - msg.get("date", 0) < 120:
                     self.handle(msg)
-                except Exception as e:
-                    log(f"Blad komendy {msg.get('text')!r}: {e}")
-                    send("❌ Coś poszło nie tak, szczegóły w logu bota.", msg["chat"]["id"])
+            except Exception as e:
+                log(f"Blad obslugi {upd.get('update_id')}: {e}")
+                chat = (msg or upd.get("callback_query", {}).get("message", {})).get("chat", {}).get("id")
+                if chat:
+                    send(t("error", lang_for(chat)), chat)
         if self.restart:
             # potwierdzamy odebrane wiadomosci, zeby po restarcie /update nie wykonal sie drugi raz
             try:
@@ -878,66 +1089,105 @@ class Commands:
             log("Restart po aktualizacji")
             sys.exit(0)  # systemd (Restart=always) uruchomi nowa wersje
 
+    def reject(self, user, chat):
+        key = f"stranger:{user.get('id')}"
+        if not meta_get(self.db, key):  # informujemy admina tylko raz o kazdej osobie
+            meta_set(self.db, key, int(time.time()))
+            who = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x)
+            if user.get("username"):
+                who += f" @{user['username']}"
+            send(t("stranger", who=esc(who), id=user.get("id")))
+        send(t("private", norm_lang(user.get("language_code")) or "en"), chat)
+
     def handle(self, msg):
         chat = msg["chat"]["id"]
         user = msg.get("from", {})
         if user.get("id") not in ADMINS:
-            key = f"stranger:{user.get('id')}"
-            if not meta_get(self.db, key):  # informujemy admina tylko raz o kazdej osobie
-                meta_set(self.db, key, int(time.time()))
-                who = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x)
-                nick = f" @{user['username']}" if user.get("username") else ""
-                send(f"👤 Ktoś pisze do bota: {esc(who)}{esc(nick)} (ID <code>{user.get('id')}</code>)")
-            send("⛔ To prywatny bot.", chat)
+            self.reject(user, chat)
             return
+        lang = lang_for(chat)
         parts = msg["text"].split()
-        cmd, args = parts[0].split("@")[0].lower(), parts[1:]
-        if cmd == "/online":
-            send("👥 <b>Online</b>\n" + cmd_online(self.instances), chat)
-        elif cmd == "/historia":
-            send(cmd_historia(self.db, args), chat)
-        elif cmd == "/gracz":
-            send(cmd_gracz(self.db, args), chat)
-        elif cmd in ("/tydzien", "/tydzień"):
-            send(weekly_summary(self.db), chat)
-        elif cmd == "/status":
-            send(cmd_status(self.instances), chat)
-        elif cmd == "/wersja":
+        cmd, args = parts[0][1:].split("@")[0].lower(), parts[1:]
+        cmd = ALIASES.get(cmd, cmd)
+        if cmd == "online":
+            send(t("online_title", lang) + "\n" + cmd_online(self.instances, lang), chat)
+        elif cmd == "history":
+            send(cmd_history(self.db, args, lang), chat)
+        elif cmd == "player":
+            send(cmd_player(self.db, args, lang), chat)
+        elif cmd == "week":
+            send(weekly_summary(self.db, lang=lang), chat)
+        elif cmd == "status":
+            send(cmd_status(self.instances, lang), chat)
+        elif cmd == "lang":
+            if args and norm_lang(args[0]):
+                self.set_lang(chat, norm_lang(args[0]))
+            else:
+                send(t("lang_choose", lang), chat, markup=LANG_BUTTONS)
+        elif cmd == "version":
             try:
-                latest = latest_release()
+                latest = esc(latest_release())
             except Exception as e:
-                latest = f"nie udało się sprawdzić ({getattr(e, 'code', type(e).__name__)})"
-            send(f"🤖 Wersja: <b>{VERSION}</b>\n📦 Najnowsza na GitHubie: {esc(latest)}", chat)
-        elif cmd == "/update":
-            self.update(chat, force="force" in args)
-        elif cmd == "/rollback":
-            self.rollback(chat)
+                latest = t("check_failed", lang, err=getattr(e, "code", type(e).__name__))
+            send(t("version", lang, v=VERSION, latest=latest), chat)
+        elif cmd == "update":
+            self.update(chat, lang, force="force" in args)
+        elif cmd == "rollback":
+            self.rollback(chat, lang)
         else:
-            send(HELP, chat, markup=KEYBOARD)
+            send(help_text(lang), chat, markup=KEYBOARD)
 
-    def update(self, chat, force=False):
-        send("🔎 Sprawdzam GitHuba…", chat)
+    def handle_callback(self, cq):
+        user = cq.get("from", {})
+        chat = cq.get("message", {}).get("chat", {}).get("id")
+        data = cq.get("data", "")
+        try:
+            tg_api("answerCallbackQuery", {"callback_query_id": cq["id"]})
+        except Exception:
+            pass
+        if user.get("id") not in ADMINS or chat is None:
+            return
+        if data.startswith("lang:") and norm_lang(data[5:]):
+            lang = norm_lang(data[5:])
+            try:
+                tg_api("editMessageText", {"chat_id": chat, "message_id": cq["message"]["message_id"],
+                                           "text": t("lang_set", lang, name=LANGS[lang])})
+            except Exception:
+                pass
+            self.set_lang(chat, lang, announce=False)
+
+    def set_lang(self, chat, lang, announce=True):
+        meta_set(self.db, f"lang:{chat}", lang)
+        CHAT_LANGS[str(chat)] = lang
+        if announce:
+            send(t("lang_set", lang, name=LANGS[lang]), chat)
+        send(help_text(lang), chat, markup=KEYBOARD)
+        if chat in ADMINS:
+            set_menu(chat)
+
+    def update(self, chat, lang, force=False):
+        send(t("upd_checking", lang), chat)
         tag = latest_release()
         if version_tuple(tag) <= version_tuple(VERSION) and not force:
-            send(f"✅ Masz najnowszą wersję ({VERSION}).", chat)
+            send(t("upd_latest", lang, v=VERSION), chat)
             return
-        send(f"⬇️ Pobieram i testuję {esc(tag)}…", chat)
+        send(t("upd_downloading", lang, tag=esc(tag)), chat)
         ok, out = install_release(tag)
         if not ok:
-            send(f"❌ Nowa wersja nie przeszła testu, zostaję przy {VERSION}.\n<pre>{esc(out)}</pre>", chat)
+            send(t("upd_failed", lang, v=VERSION) + f"\n<pre>{esc(out)}</pre>", chat)
             return
         meta_set(self.db, "updated_from", VERSION)
-        send(f"♻️ Zainstalowano {esc(tag)}, restartuję się (ok. 10 s)…", chat)
+        send(t("upd_restart", lang, tag=esc(tag)), chat)
         self.restart = True
 
-    def rollback(self, chat):
+    def rollback(self, chat, lang):
         bak = BOT_PATH + ".bak"
         if not os.path.exists(bak):
-            send("Nie ma poprzedniej wersji do przywrócenia.", chat)
+            send(t("rb_none", lang), chat)
             return
         os.replace(bak, BOT_PATH)
         meta_set(self.db, "updated_from", VERSION)
-        send("⏪ Przywracam poprzednią wersję, restartuję się (ok. 10 s)…", chat)
+        send(t("rb_restart", lang), chat)
         self.restart = True
 
 
@@ -945,12 +1195,13 @@ class Commands:
 
 def run():
     db = open_db()
+    load_langs(db)
     instances = {}
     host = HostMonitor()
     commands = Commands(db, instances)
     startup = True
     last_scan = last_clean = last_host = 0
-    log(f"Start, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
+    log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
     while True:
         now = time.time()
         if now - last_scan >= RESCAN_SECONDS:
@@ -962,7 +1213,7 @@ def run():
                     if inst.status != "skip":
                         log(f"Instancja {inst.label}: {inst.status}")
                         if not startup and inst.status == "ok":
-                            send(f"🆕 Nowa instancja: <b>{esc(inst.label)}</b>, śledzę graczy.")
+                            send(t("new_instance", label=esc(inst.label)))
                 elif inst.status == "brak":
                     inst.detect()
                 if inst.status == "brak":
@@ -971,15 +1222,15 @@ def run():
                     db.execute("DELETE FROM warned WHERE instance=?", (name,))
                     db.commit()
             if startup:
-                tracked = ", ".join(esc(i.label) for i in instances.values() if i.status == "ok") or "nic"
+                tracked = ", ".join(esc(i.label) for i in instances.values() if i.status == "ok") or t("nothing")
                 old = meta_get(db, "updated_from")
-                head = (f"✅ Zaktualizowano: {esc(old)} → <b>{VERSION}</b>" if old
-                        else f"🤖 Bot AMP {VERSION} działa.")
+                head = t("updated", old=esc(old), v=VERSION) if old else t("startup", v=VERSION)
                 if old:
                     db.execute("DELETE FROM meta WHERE key='updated_from'")
                     db.commit()
-                send("\n".join([head, f"Śledzę: {tracked}", "Komendy: /pomoc"] + host.startup_notes()))
-                set_menu()
+                send("\n".join([head, t("tracking", list=tracked), t("commands_hint")] + host.startup_notes()))
+                for admin in ADMINS:
+                    set_menu(admin)
             startup = False
             last_scan = now
         for inst in instances.values():
@@ -1007,7 +1258,7 @@ def run():
 
 def print_rows(rows):
     for game, _inst, user, uid, sid, ip, joined, left, note in rows:
-        dur = fmt_duration(left - joined) if left else (note or "online?")
+        dur = fmt_duration(left - joined) if left else (note_text(note) or "online?")
         ids = " ".join(x for x in (sid and f"SteamID:{sid}", uid and f"ID:{uid}", ip and f"IP:{ip}") if x)
         print(f"{ts(joined)}  {game:<10} {user:<20} {dur:<18} {ids}")
 
@@ -1018,7 +1269,7 @@ def main():
     if not args:
         run()
     elif args[0] == "--test":
-        send("✅ Test: bot AMP ma połączenie z Telegramem.")
+        send(t("test_msg"))
         print("Wyslano (jesli nie przyszlo, sprawdz TG_TOKEN i TG_CHAT_ID).")
     elif args[0] == "--chatid":
         res = tg_api("getUpdates")

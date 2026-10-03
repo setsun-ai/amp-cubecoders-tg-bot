@@ -23,6 +23,7 @@ def env(tmp_path, monkeypatch):
     sent = []
     monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent.append(text))
     monkeypatch.setattr(bot, "DB_PATH", str(tmp_path / "db" / "players.db"))
+    monkeypatch.setattr(bot, "CHAT_LANGS", {})
     root = tmp_path / "instances"
 
     def make(name, kvp_name, kvp_lines):
@@ -162,7 +163,7 @@ def test_stranger_is_rejected_and_reported_once(env):
     for _ in range(2):
         c.handle({"chat": {"id": 9}, "from": {"id": 9, "first_name": "Obcy"}, "text": "/online"})
     assert sum("Ktoś pisze do bota" in m for m in env.sent) == 1
-    assert env.sent.count("⛔ To prywatny bot.") == 2
+    assert env.sent.count("⛔ This is a private bot.") == 2  # obcy bez language_code: po angielsku
 
 
 def test_battery_warning(monkeypatch, env):
@@ -217,3 +218,52 @@ def test_update_command_sets_restart(monkeypatch, env):
     c2 = bot.Commands(env.db, env.inst)
     c2.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/update"})
     assert not c2.restart and "najnowszą" in env.sent[-1]
+
+
+def test_every_text_in_four_languages_with_same_placeholders():
+    import string
+    for key, texts in bot.STRINGS.items():
+        assert len(texts) == 4 and all(texts), key
+        fields = [sorted(f for _, f, _, _ in string.Formatter().parse(x) if f) for x in texts]
+        assert all(f == fields[0] for f in fields), key
+
+
+def test_language_switch(env):
+    c = bot.Commands(env.db, env.inst)
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/lang"})
+    assert env.sent[-1] == "🌐 Wybierz język:"
+    c.handle_callback({"id": "x", "from": {"id": 1}, "data": "lang:en",
+                       "message": {"chat": {"id": 1}, "message_id": 5}})
+    assert bot.lang_for(1) == "en" and bot.meta_get(env.db, "lang:1") == "en"
+    env.sent.clear()
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/online"})
+    env.write("Valheim01", f"Got connection SteamID {SID_A}", "Got character ZDOID from Alice : 111:1")
+    assert "Nobody is playing right now" in env.sent[0]
+    assert "joined the server" in env.sent[-1]  # powiadomienia na czacie admina tez po angielsku
+
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/lang ua"})
+    assert bot.lang_for(1) == "uk"
+    env.write("Valheim01", f"Closing socket {SID_A}")
+    assert "виходить" in env.sent[-1] and "хв" in env.sent[-1]
+
+    bot.CHAT_LANGS.clear()
+    bot.load_langs(env.db)  # po restarcie bota jezyk wraca z bazy
+    assert bot.lang_for(1) == "uk"
+
+
+def test_stranger_gets_answer_in_own_language(env):
+    c = bot.Commands(env.db, env.inst)
+    c.handle({"chat": {"id": 9}, "from": {"id": 9, "first_name": "X", "language_code": "ru"}, "text": "/x"})
+    assert env.sent[-1] == "⛔ Это приватный бот."
+
+
+def test_old_polish_notes_are_translated(env):
+    env.db.execute("INSERT INTO sessions(instance, game, username, joined, note) VALUES "
+                   "('Valheim01', 'Valheim', 'Alice', 1, 'bot zrestartowany')")
+    assert "bot restarted" in bot.cmd_history(env.db, [], "en")
+
+
+def test_help_and_selftest_in_all_languages():
+    for lang in bot.LANG_ORDER:
+        text = bot.help_text(lang)
+        assert all(f"/{cmd}" in text for cmd, _ in bot.COMMANDS)
