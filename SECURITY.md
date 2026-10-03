@@ -15,7 +15,7 @@ Never commit, paste or screenshot them. The repository contains no secrets and n
 What the code does for you:
 - Only the Telegram users in `TG_ADMINS` (by default the owner of `TG_CHAT_ID`) can use commands. Everyone else gets a refusal, and the admin is told once who wrote.
 - Logs never contain the bot token, not even in Telegram errors.
-- The bot runs as the unprivileged `amp` user and only **reads** AMP logs and settings files.
+- The bot runs as the unprivileged `amp` user. It only **reads** AMP files; it changes servers only through the AMP API, as its own AMP user.
 - `/update` installs only releases of this repository, runs the new code with `--selftest` first and keeps the previous version for `/rollback`.
 - Player names from game logs are HTML-escaped before they are sent, so a nickname can't inject Telegram formatting or links.
 
