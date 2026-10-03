@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0 (2026-10)
+
+- `/servers` → a server: **💾 Backup** (AMP local backup), **👥 Players** (who is online according to AMP, with 👢 kick and 🚫 ban through the game console), **⌨️ Console** (type a command, confirm, see the server's answer) and **🔑 Password** (the game's password settings; your message with the new password is deleted from the chat right away).
+- **⬆️ Game update** now updates the game itself (AMP's `UpdateApplication`, e.g. SteamCMD) instead of upgrading the AMP instance.
+- Start starts the instance or, if it's already up, the game; restart restarts the game. Every action asks for confirmation (except start) and is shown with live progress.
+
 ## 1.3.0 (2026-10)
 
 - **AMP panel on Telegram.** Running tasks of the panel and of every running instance (updates, backups, downloads – whether started from the bot or from AMP) appear as one message with a progress bar, edited in place (at most every 10 s) until it turns into ✅ done or ❌ failed.

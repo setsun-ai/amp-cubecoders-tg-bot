@@ -26,7 +26,7 @@
 - **Weekly summary** on Sunday evening: play time per game, top players, the busiest hour.
 - **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats or the [playit.gg](https://playit.gg) tunnel goes down.
 - **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
-- **Server control** (`/servers`): start, stop, restart and update AMP instances with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`.
+- **Server control** (`/servers`): start, stop, restart, game update and backup of AMP instances, the list of players online with kick and ban, the game console (with the server's answer) and the server password – all with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`.
 - **AMP panel on Telegram**: updates, backups and downloads started from the bot or the panel show up as one message with a live progress bar (▓▓▓▓░░░░░░ 40%), edited in place until ✅ done or ❌ failed; servers that start, stop or crash are reported too (`AMP_NOTIFY=0` turns it off).
 - **Languages**: `/lang` with buttons, remembered per chat.
 - **Self-update**: `/update` installs the newest GitHub release after testing it on your server; `/rollback` goes back.

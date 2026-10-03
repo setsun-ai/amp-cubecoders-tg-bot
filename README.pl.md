@@ -26,7 +26,7 @@
 - **Podsumowanie tygodnia** w niedzielę wieczorem: czas gry na każdym serwerze, ranking, godzina największego ruchu.
 - **Maszyna**: alert, gdy bateria laptopa spadnie poniżej progu, gdy CPU się przegrzewa albo gdy padnie tunel [playit.gg](https://playit.gg).
 - **Komendy** (tylko dla admina, pod przyciskiem *Menu* w Telegramie): `/online`, `/servers`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`. Stare polskie nazwy (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) też działają.
-- **Sterowanie serwerami** (`/servers`): start, stop, restart i aktualizacja instancji AMP przyciskami, z potwierdzeniem i ostrzeżeniem, gdy ktoś gra. Wymaga osobnego konta AMP dla bota (`AMP_URL`, `AMP_USER`, `AMP_PASS`); sprawdzisz je komendą `python3 /opt/amp-tg-bot/bot.py --amp-test`.
+- **Sterowanie serwerami** (`/servers`): start, stop, restart, aktualizacja gry i backup instancji AMP, lista graczy online z kick i ban, konsola gry (z odpowiedzią serwera) i hasło serwera – wszystko przyciskami, z potwierdzeniem i ostrzeżeniem, gdy ktoś gra. Wymaga osobnego konta AMP dla bota (`AMP_URL`, `AMP_USER`, `AMP_PASS`); sprawdzisz je komendą `python3 /opt/amp-tg-bot/bot.py --amp-test`.
 - **Panel AMP na Telegramie**: aktualizacje, backupy i pobieranie uruchomione z bota albo z panelu pojawiają się jako jedna wiadomość z paskiem postępu (▓▓▓▓░░░░░░ 40%), edytowana na bieżąco aż do ✅ gotowe albo ❌ błąd; start, stop i awaria serwera też trafiają na czat (`AMP_NOTIFY=0` wyłącza).
 - **Języki**: `/lang` z przyciskami, zapamiętywany osobno dla każdego czatu.
 - **Sam się aktualizuje**: `/update` instaluje najnowsze wydanie z GitHuba po sprawdzeniu go na twoim serwerze; `/rollback` wraca do poprzedniego.

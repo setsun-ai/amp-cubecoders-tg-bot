@@ -293,9 +293,17 @@ class FakeAmp(bot.Amp):
                  "Running": False, "AppState": 0}]}]}
         if path == "ADSModule/StopInstance":
             return {"Status": True}
-        if path == "ADSModule/UpgradeInstance":
+        if path.endswith("Core/UpdateApplication"):
             return {"Status": False, "Reason": "Update already running"}
-        return {}
+        if path.endswith("Core/GetUserList"):
+            return {"result": {"u1": "Alice", "u2": "Bob"}}
+        if path.endswith("Core/GetUpdates"):
+            sent = any(p.endswith("SendConsoleMessage") for p, _ in self.calls)
+            return {"ConsoleEntries": [{"Contents": "Kicked Alice"}] if sent else [{"Contents": "old line"}]}
+        if path.endswith("Core/GetSettingsSpec"):
+            return {"Server": [{"Name": "Server password", "Node": "GenericModule.App.ServerPassword"},
+                               {"Name": "Steam password", "Node": "steamcmdplugin.SteamPassword"}]}
+        return {"Status": True}
 
 
 def test_amp_relogin_and_instances():
@@ -425,3 +433,58 @@ def test_state_changes_from_the_panel(watcher, env):
     w.amp.app_state = 100
     w.check_states()
     assert env.sent == ["🔴 <b>Valheim</b>: zatrzymany", "❌ <b>Valheim</b>: błąd"]
+
+
+def test_players_console_and_password(env, monkeypatch):
+    edits, deleted = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+
+    def fake_api(method, params=None, **kw):
+        if method == "deleteMessage":
+            deleted.append(params)
+        return {}
+
+    monkeypatch.setattr(bot, "tg_api", fake_api)
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+
+    def click(data):
+        c.handle_callback({"id": "q", "from": {"id": 1, "first_name": "Admin"}, "data": data,
+                           "message": {"chat": {"id": 1}, "message_id": 7}})
+        return edits[-1]
+
+    def console_sent():
+        return [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")]
+
+    text, markup = click("pl:Valheim01")
+    assert "Alice" in str(markup) and "Bob" in str(markup)
+    text, _ = click("pa:kick:0:Valheim01")
+    assert "Alice" in text and "❓" in text and console_sent() == []
+    text, _ = click("pa!:kick:0:Valheim01")
+    assert console_sent() == ["kick Alice"] and "Kicked Alice" in text and "old line" not in text
+
+    click("con:Valheim01")
+    c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "say hi", "message_id": 50})
+    assert "say hi" in env.sent[-1] and console_sent() == ["kick Alice"]  # najpierw potwierdzenie
+    click("con!:Valheim01")
+    assert console_sent()[-1] == "say hi"
+
+    text, markup = click("pw:Valheim01")
+    assert "Server password" in str(markup) and "Steam" not in str(markup)
+    click("pws:0:Valheim01")
+    c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "sekret123", "message_id": 51})
+    assert deleted[-1]["message_id"] == 51 and "sekret123" not in env.sent[-1]
+    text, _ = click("pw!:Valheim01")
+    sets = [pl for p, pl in c.amp.calls if p.endswith("Core/SetConfig")]
+    assert sets[-1]["node"] == "GenericModule.App.ServerPassword" and sets[-1]["value"] == "sekret123"
+    assert "✅" in text
+
+
+def test_stranger_cannot_type_into_console(env, monkeypatch):
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.awaiting["9"] = {"kind": "console", "name": "Valheim01"}
+    c.handle_text({"chat": {"id": 9}, "from": {"id": 9}, "text": "stop", "message_id": 1})
+    assert not any(p.endswith("SendConsoleMessage") for p, _ in c.amp.calls)

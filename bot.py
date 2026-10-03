@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -275,7 +275,52 @@ STRINGS = {
     "act_start": ("▶️ Start", "▶️ Start", "▶️ Запуск", "▶️ Запуск"),
     "act_stop": ("⏹ Stop", "⏹ Stop", "⏹ Стоп", "⏹ Стоп"),
     "act_restart": ("🔁 Restart", "🔁 Restart", "🔁 Перезапуск", "🔁 Перезапуск"),
-    "act_update": ("⬆️ Aktualizacja", "⬆️ Update", "⬆️ Обновление", "⬆️ Оновлення"),
+    "act_update": ("⬆️ Aktualizacja gry", "⬆️ Game update", "⬆️ Обновление игры", "⬆️ Оновлення гри"),
+    "act_backup": ("💾 Backup", "💾 Backup", "💾 Бэкап", "💾 Бекап"),
+    "act_kick": ("👢 Kick", "👢 Kick", "👢 Кик", "👢 Кік"),
+    "act_ban": ("🚫 Ban", "🚫 Ban", "🚫 Бан", "🚫 Бан"),
+    "btn_players": ("👥 Gracze", "👥 Players", "👥 Игроки", "👥 Гравці"),
+    "btn_console": ("⌨️ Konsola", "⌨️ Console", "⌨️ Консоль", "⌨️ Консоль"),
+    "btn_password": ("🔑 Hasło", "🔑 Password", "🔑 Пароль", "🔑 Пароль"),
+    "btn_cancel": ("✖️ Anuluj", "✖️ Cancel", "✖️ Отмена", "✖️ Скасувати"),
+    "srv_need_running": ("Najpierw uruchom instancję.", "Start the instance first.", "Сначала запусти инстанс.",
+                         "Спочатку запусти інстанс."),
+    "pl_title": ("👥 <b>{name}</b> – gracze online:", "👥 <b>{name}</b> – players online:",
+                 "👥 <b>{name}</b> – игроки онлайн:", "👥 <b>{name}</b> – гравці онлайн:"),
+    "pl_none": ("Nikt nie gra.", "Nobody is playing.", "Никто не играет.", "Ніхто не грає."),
+    "pl_confirm": ("❓ <b>{action}</b>: {player} na {name}?", "❓ <b>{action}</b>: {player} on {name}?",
+                   "❓ <b>{action}</b>: {player} на {name}?", "❓ <b>{action}</b>: {player} на {name}?"),
+    "con_prompt": ("⌨️ <b>{name}</b>: napisz komendę konsoli (np. <code>say Cześć</code>).",
+                   "⌨️ <b>{name}</b>: type a console command (e.g. <code>say Hello</code>).",
+                   "⌨️ <b>{name}</b>: напиши команду консоли (например, <code>say Привет</code>).",
+                   "⌨️ <b>{name}</b>: напиши команду консолі (наприклад, <code>say Привіт</code>)."),
+    "con_confirm": ("❓ Wysłać do konsoli {name}?\n<code>{cmd}</code>",
+                    "❓ Send to the {name} console?\n<code>{cmd}</code>",
+                    "❓ Отправить в консоль {name}?\n<code>{cmd}</code>",
+                    "❓ Надіслати в консоль {name}?\n<code>{cmd}</code>"),
+    "con_sent": ("⌨️ Wysłano. Odpowiedź serwera:", "⌨️ Sent. Server output:", "⌨️ Отправлено. Ответ сервера:",
+                 "⌨️ Надіслано. Відповідь сервера:"),
+    "con_silent": ("⌨️ Wysłano (serwer nic nie odpisał).", "⌨️ Sent (no output from the server).",
+                   "⌨️ Отправлено (сервер ничего не ответил).", "⌨️ Надіслано (сервер нічого не відповів)."),
+    "pw_title": ("🔑 <b>{name}</b> – które hasło zmienić?", "🔑 <b>{name}</b> – which password?",
+                 "🔑 <b>{name}</b> – какой пароль изменить?", "🔑 <b>{name}</b> – який пароль змінити?"),
+    "pw_none": ("Nie znalazłem ustawienia hasła dla tej gry.", "No password setting found for this game.",
+                "Не нашёл настройки пароля для этой игры.", "Не знайшов налаштування пароля для цієї гри."),
+    "pw_prompt": ("🔑 Napisz nowe hasło dla „{setting}” (wiadomość z hasłem od razu usunę z czatu). "
+                  "Kropka <code>.</code> = bez hasła.",
+                  "🔑 Type the new value of \"{setting}\" (I'll delete your message right away). "
+                  "A dot <code>.</code> = no password.",
+                  "🔑 Напиши новый пароль для «{setting}» (сообщение сразу удалю). Точка <code>.</code> = без пароля.",
+                  "🔑 Напиши новий пароль для «{setting}» (повідомлення одразу видалю). "
+                  "Крапка <code>.</code> = без пароля."),
+    "pw_confirm": ("❓ Ustawić nowe hasło „{setting}” na {name}? ({n} znaków)",
+                   "❓ Set the new \"{setting}\" on {name}? ({n} characters)",
+                   "❓ Установить новый пароль «{setting}» на {name}? ({n} символов)",
+                   "❓ Встановити новий пароль «{setting}» на {name}? ({n} символів)"),
+    "pw_done": ("✅ Hasło zmienione. Zwykle trzeba zrestartować serwer.",
+                "✅ Password changed. The server usually needs a restart.",
+                "✅ Пароль изменён. Обычно нужен перезапуск сервера.",
+                "✅ Пароль змінено. Зазвичай потрібен перезапуск сервера."),
     "st_ready": ("działa", "running", "работает", "працює"),
     "st_stopped": ("zatrzymany", "stopped", "остановлен", "зупинено"),
     "st_starting": ("uruchamia się", "starting", "запускается", "запускається"),
@@ -1052,8 +1097,56 @@ class Amp:
             if isinstance(r, dict) and r.get("Title") == "Unauthorized Access":
                 self.sessions.pop(prefix, None)
                 continue
-            return amp_unwrap(r)
+            r = amp_unwrap(r)
+            if isinstance(r, dict) and r.get("Status") is False:
+                raise AmpError(r.get("Reason") or method)
+            return r
         raise AmpError("Unauthorized Access")
+
+    def find(self, name):
+        inst = next((i for i in self.instances() if i["name"] == name), None)
+        if inst is None:
+            raise AmpError(name)
+        return inst
+
+    def users(self, name):
+        """Gracze online wedlug AMP: lista nickow."""
+        inst = self.find(name)
+        if not inst["running"]:
+            return []
+        r = self.instance_call(inst["id"], "Core/GetUserList")
+        if isinstance(r, dict):
+            names = list(r.values())
+        else:
+            names = [u.get("Name") if isinstance(u, dict) else u for u in r or []]
+        return sorted(str(n) for n in names if n)
+
+    def console(self, name, command, wait=2.0):
+        """Komenda do konsoli gry; zwraca linie, ktore serwer wypisal w ciagu `wait` sekund."""
+        inst = self.find(name)
+        self.instance_call(inst["id"], "Core/GetUpdates")  # odbieramy zalegle wpisy, zeby pokazac tylko odpowiedz
+        self.instance_call(inst["id"], "Core/SendConsoleMessage", message=command)
+        time.sleep(wait)
+        updates = self.instance_call(inst["id"], "Core/GetUpdates") or {}
+        entries = updates.get("ConsoleEntries") if isinstance(updates, dict) else None
+        return [str(e.get("Contents", "")) for e in entries or [] if isinstance(e, dict)][-12:]
+
+    def password_settings(self, name):
+        """Ustawienia z haslem gry (nie logowania do Steama ani AMP): [(nazwa, node)]."""
+        inst = self.find(name)
+        spec = self.instance_call(inst["id"], "Core/GetSettingsSpec") or {}
+        found = []
+        for settings in (spec.values() if isinstance(spec, dict) else []):
+            for item in settings or []:
+                node, label = str(item.get("Node", "")), str(item.get("Name", ""))
+                text = f"{node} {label}".lower()
+                if "password" in text and not any(x in text for x in ("steam", "login", "core.", "rcon", "admin")):
+                    found.append((label or node, node))
+        return found
+
+    def set_config(self, name, node, value):
+        inst = self.find(name)
+        return self.instance_call(inst["id"], "Core/SetConfig", node=node, value=value)
 
     @staticmethod
     def norm_tasks(raw):
@@ -1086,11 +1179,36 @@ class Amp:
                 found[(label, task["id"])] = task
         return found
 
-    ACTIONS = {"start": "ADSModule/StartInstance", "stop": "ADSModule/StopInstance",
-               "restart": "ADSModule/RestartInstance", "update": "ADSModule/UpgradeInstance"}
+    ACTIONS = ("start", "stop", "restart", "update", "backup")
+    # komendy konsoli dla kick/ban; {player} = nick
+    GAME_COMMANDS = {"default": {"kick": "kick {player}", "ban": "ban {player}"}}
 
     def action(self, act, name):
-        return self.call(self.ACTIONS[act], InstanceName=name)
+        """
+        start: wlacza instancje (ADS), a gdy juz dziala - sama gre; stop: cala instancja;
+        restart: gra (albo instancja, gdy wylaczona); update: aktualizacja gry (SteamCMD itp.);
+        backup: kopia zapasowa instancji. Postep widac w zadaniach (AmpWatcher).
+        """
+        inst = self.find(name)
+        if act == "stop":
+            return self.call("ADSModule/StopInstance", InstanceName=name)
+        if not inst["running"]:
+            if act in ("start", "restart"):
+                return self.call("ADSModule/StartInstance", InstanceName=name)
+            raise AmpError(t("srv_need_running"))
+        if act == "start":
+            return self.instance_call(inst["id"], "Core/Start")
+        if act == "restart":
+            return self.instance_call(inst["id"], "Core/Restart")
+        if act == "update":
+            return self.instance_call(inst["id"], "Core/UpdateApplication")
+        title = datetime.now().strftime("Telegram %Y-%m-%d %H:%M")
+        return self.instance_call(inst["id"], "LocalFileBackupPlugin/TakeBackup", Title=title,
+                                  Description="amp-tg-bot", Sticky=False)
+
+    def player_action(self, act, name, player):
+        commands = self.GAME_COMMANDS.get(self.find(name)["module"], self.GAME_COMMANDS["default"])
+        return self.console(name, commands[act].format(player=player))
 
 
 # AppState z AMP -> (emoji, klucz tekstu)
@@ -1375,6 +1493,8 @@ class Commands:
         self.offset = None
         self.restart = False
         self.amp = Amp()
+        self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
+        self.cache = {}  # chat -> listy (gracze, ustawienia), do ktorych odwoluja sie przyciski po numerze
 
     def poll(self, timeout):
         """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli)."""
@@ -1397,7 +1517,10 @@ class Commands:
                 if upd.get("callback_query"):
                     self.handle_callback(upd["callback_query"])
                 elif msg and msg.get("text", "").startswith("/") and time.time() - msg.get("date", 0) < 120:
+                    self.awaiting.pop(str(msg["chat"]["id"]), None)  # nowa komenda przerywa czekanie na dane
                     self.handle(msg)
+                elif msg and msg.get("text") and str(msg["chat"]["id"]) in self.awaiting:
+                    self.handle_text(msg)
             except Exception as e:
                 log(f"Blad obslugi {upd.get('update_id')}: {e}")
                 chat = (msg or upd.get("callback_query", {}).get("message", {})).get("chat", {}).get("id")
@@ -1481,7 +1604,8 @@ class Commands:
             except Exception:
                 pass
             self.set_lang(chat, lang, announce=False)
-        elif data == "srv" or data.startswith(("srv:", "do:", "do!:")):
+        elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
+                                               "pws:", "pw!:")):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
@@ -1514,6 +1638,124 @@ class Commands:
     def btn(key, data, lang):
         return {"text": t(key, lang), "callback_data": data[:64]}
 
+    def handle_text(self, msg):
+        chat, user = msg["chat"]["id"], msg.get("from", {})
+        if user.get("id") not in ADMINS:
+            return
+        lang = lang_for(chat)
+        wait = self.awaiting.pop(str(chat))
+        text = msg["text"].strip()
+        if wait["kind"] == "console":
+            self.awaiting[str(chat)] = {"kind": "console_ready", "name": wait["name"], "cmd": text}
+            send(t("con_confirm", lang, name=esc(wait["name"]), cmd=esc(text)), chat,
+                 markup={"inline_keyboard": [[self.btn("btn_yes", f"con!:{wait['name']}", lang),
+                                              self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
+        elif wait["kind"] == "password":
+            try:  # haslo nie zostaje w historii czatu
+                tg_api("deleteMessage", {"chat_id": chat, "message_id": msg["message_id"]})
+            except Exception:
+                pass
+            value = "" if text == "." else text
+            self.awaiting[str(chat)] = {"kind": "password_ready", "name": wait["name"], "node": wait["node"],
+                                        "setting": wait["setting"], "value": value}
+            send(t("pw_confirm", lang, setting=esc(wait["setting"]), name=esc(wait["name"]), n=len(value)), chat,
+                 markup={"inline_keyboard": [[self.btn("btn_yes", f"pw!:{wait['name']}", lang),
+                                              self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
+
+    def audit(self, user, chat, action, name):
+        who = user.get("first_name") or str(user.get("id"))
+        log(f"AMP: {who} -> {action} {name}")
+        if str(chat) != str(CHAT_ID):  # admin dostaje slad kazdej akcji wykonanej z innego czatu
+            send(t("srv_audit", who=esc(who), action=esc(action), name=esc(name)))
+
+    def players_view(self, name, chat, lang):
+        back = [self.btn("btn_back", f"srv:{name}", lang)]
+        try:
+            players = self.amp.users(name)
+        except Exception as e:
+            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [back]}
+        self.cache[(str(chat), "players", name)] = players
+        if not players:
+            return t("pl_title", lang, name=esc(name)) + "\n" + t("pl_none", lang), {"inline_keyboard": [back]}
+        rows = [[{"text": f"👤 {p}", "callback_data": "noop"},
+                 self.btn("act_kick", f"pa:kick:{i}:{name}", lang), self.btn("act_ban", f"pa:ban:{i}:{name}", lang)]
+                for i, p in enumerate(players[:20])]
+        return t("pl_title", lang, name=esc(name)), {"inline_keyboard": rows + [back]}
+
+    def tools_callback(self, data, user, chat, lang):
+        """Gracze (kick/ban), konsola i hasla; dane przycisku: <rodzaj>:...:<instancja>."""
+        kind, _, rest = data.partition(":")
+        if kind == "pl":
+            return self.players_view(rest, chat, lang)
+        if kind in ("pa", "pa!"):
+            act, idx, name = rest.split(":", 2)
+            players = self.cache.get((str(chat), "players", name)) or []
+            if not idx.isdigit() or int(idx) >= len(players):
+                return self.players_view(name, chat, lang)
+            player = players[int(idx)]
+            if kind == "pa":
+                return (t("pl_confirm", lang, action=t("act_" + act, lang), player=esc(player), name=esc(name)),
+                        {"inline_keyboard": [[self.btn("btn_yes", f"pa!:{act}:{idx}:{name}", lang),
+                                              self.btn("btn_back", f"pl:{name}", lang)]]})
+            try:
+                out = self.amp.player_action(act, name, player)
+            except Exception as e:
+                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+            self.audit(user, chat, f"{t('act_' + act)} {player}", name)
+            return self.server_view(name, lang, note=self.console_note(out, lang))
+        if kind == "con":
+            self.awaiting[str(chat)] = {"kind": "console", "name": rest}
+            return t("con_prompt", lang, name=esc(rest)), {"inline_keyboard": [[self.btn("btn_cancel",
+                                                                                          f"srv:{rest}", lang)]]}
+        if kind == "con!":
+            wait = self.awaiting.pop(str(chat), None)
+            if not wait or wait.get("kind") != "console_ready" or wait["name"] != rest:
+                return self.server_view(rest, lang)
+            try:
+                out = self.amp.console(rest, wait["cmd"])
+            except Exception as e:
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+            self.audit(user, chat, f"⌨️ {wait['cmd']}", rest)
+            return self.server_view(rest, lang, note=self.console_note(out, lang))
+        if kind == "pw":
+            try:
+                settings = self.amp.password_settings(rest)
+            except Exception as e:
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+            self.cache[(str(chat), "pw", rest)] = settings
+            back = [self.btn("btn_back", f"srv:{rest}", lang)]
+            if not settings:
+                return t("pw_none", lang), {"inline_keyboard": [back]}
+            rows = [[{"text": label[:60], "callback_data": f"pws:{i}:{rest}"[:64]}] for i, (label, _) in
+                    enumerate(settings[:10])]
+            return t("pw_title", lang, name=esc(rest)), {"inline_keyboard": rows + [back]}
+        if kind == "pws":
+            idx, name = rest.split(":", 1)
+            settings = self.cache.get((str(chat), "pw", name)) or []
+            if not idx.isdigit() or int(idx) >= len(settings):
+                return self.server_view(name, lang)
+            label, node = settings[int(idx)]
+            self.awaiting[str(chat)] = {"kind": "password", "name": name, "node": node, "setting": label}
+            return t("pw_prompt", lang, setting=esc(label)), {"inline_keyboard": [[self.btn("btn_cancel",
+                                                                                            f"srv:{name}", lang)]]}
+        if kind == "pw!":
+            wait = self.awaiting.pop(str(chat), None)
+            if not wait or wait.get("kind") != "password_ready" or wait["name"] != rest:
+                return self.server_view(rest, lang)
+            try:
+                self.amp.set_config(rest, wait["node"], wait["value"])
+            except Exception as e:
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+            self.audit(user, chat, f"🔑 {wait['setting']}", rest)
+            return self.server_view(rest, lang, note=t("pw_done", lang))
+        return self.servers_view(lang)
+
+    @staticmethod
+    def console_note(lines, lang):
+        if not lines:
+            return t("con_silent", lang)
+        return t("con_sent", lang) + "\n<pre>" + esc("\n".join(lines))[-1500:] + "</pre>"
+
     def server_view(self, name, lang, note=""):
         try:
             inst = next((i for i in self.amp.instances() if i["name"] == name), None)
@@ -1526,11 +1768,15 @@ class Commands:
                  t("srv_players", lang, n=self.players_on(name))]
         if note:
             lines += ["", note]
-        up = inst["running"] and inst["state"] not in (0, None)
-        acts = ["stop", "restart"] if up else ["start"]
-        rows = [[self.btn("act_" + a, f"do:{a}:{name}", lang) for a in acts],
-                [self.btn("act_update", f"do:update:{name}", lang)],
-                [self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
+        up = inst["running"] and inst["state"] not in (0, -1, None)
+        acts = ["stop", "restart"] if up else ["start"] + (["stop"] if inst["running"] else [])
+        rows = [[self.btn("act_" + a, f"do:{a}:{name}", lang) for a in acts]]
+        if inst["running"]:
+            rows += [[self.btn("act_update", f"do:update:{name}", lang),
+                      self.btn("act_backup", f"do:backup:{name}", lang)],
+                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang),
+                      self.btn("btn_password", f"pw:{name}", lang)]]
+        rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
         return "\n".join(lines), {"inline_keyboard": rows}
 
     def servers_callback(self, data, user, chat, lang):
@@ -1541,6 +1787,8 @@ class Commands:
         kind, _, rest = data.partition(":")
         if kind == "srv":
             return self.server_view(rest, lang)
+        if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!"):
+            return self.tools_callback(data, user, chat, lang)
         act, _, name = rest.partition(":")
         if act not in Amp.ACTIONS:
             return self.servers_view(lang)
@@ -1556,10 +1804,7 @@ class Commands:
             self.amp.action(act, name)
         except Exception as e:
             return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
-        who = user.get("first_name") or str(user.get("id"))
-        log(f"AMP: {who} -> {act} {name}")
-        if str(chat) != str(CHAT_ID):  # admin dostaje slad kazdej akcji wykonanej z innego czatu
-            send(t("srv_audit", who=esc(who), action=t("act_" + act), name=esc(name)))
+        self.audit(user, chat, t("act_" + act), name)
         return self.server_view(name, lang, note=t("srv_done", lang, action=label, name=esc(name)))
 
     def set_lang(self, chat, lang, announce=True):
