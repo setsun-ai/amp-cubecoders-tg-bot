@@ -7,6 +7,7 @@
 | Secret | Grants | Lives in |
 |---|---|---|
 | `TG_TOKEN` | full control of the bot | `/etc/amp-tg-bot.env` (root only, `chmod 600`) |
+| `AMP_PASS` | control of your AMP servers (whatever the bot's AMP role allows) | `/etc/amp-tg-bot.env` |
 | `players.db` | player names, SteamIDs, UUIDs, play times | `/var/lib/amp-tg-bot/` |
 
 Never commit, paste or screenshot them. The repository contains no secrets and no player data; the tests use made-up names and IDs.
@@ -17,6 +18,11 @@ What the code does for you:
 - The bot runs as the unprivileged `amp` user and only **reads** AMP logs and settings files.
 - `/update` installs only releases of this repository, runs the new code with `--selftest` first and keeps the previous version for `/rollback`.
 - Player names from game logs are HTML-escaped before they are sent, so a nickname can't inject Telegram formatting or links.
+
+- Give the bot its **own AMP user**, never your admin account, so you can revoke it alone.
+- Stopping, restarting and updating a server always needs a second tap, with a warning if players are on.
+
+**If the AMP password leaked:** change it in AMP (*Configuration → User Management*) and in `/etc/amp-tg-bot.env`.
 
 **If the token leaked:** @BotFather → `/revoke`, put the new token into `/etc/amp-tg-bot.env`, then `systemctl restart amp-tg-bot`.
 

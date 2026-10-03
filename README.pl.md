@@ -25,7 +25,8 @@
 - **💀 Śmierci** (Valheim, Minecraft) z licznikiem na dziś.
 - **Podsumowanie tygodnia** w niedzielę wieczorem: czas gry na każdym serwerze, ranking, godzina największego ruchu.
 - **Maszyna**: alert, gdy bateria laptopa spadnie poniżej progu, gdy CPU się przegrzewa albo gdy padnie tunel [playit.gg](https://playit.gg).
-- **Komendy** (tylko dla admina, pod przyciskiem *Menu* w Telegramie): `/online`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`. Stare polskie nazwy (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) też działają.
+- **Komendy** (tylko dla admina, pod przyciskiem *Menu* w Telegramie): `/online`, `/servers`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`. Stare polskie nazwy (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) też działają.
+- **Sterowanie serwerami** (`/servers`): start, stop, restart i aktualizacja instancji AMP przyciskami, z potwierdzeniem i ostrzeżeniem, gdy ktoś gra. Wymaga osobnego konta AMP dla bota (`AMP_URL`, `AMP_USER`, `AMP_PASS`); sprawdzisz je komendą `python3 /opt/amp-tg-bot/bot.py --amp-test`.
 - **Języki**: `/lang` z przyciskami, zapamiętywany osobno dla każdego czatu.
 - **Sam się aktualizuje**: `/update` instaluje najnowsze wydanie z GitHuba po sprawdzeniu go na twoim serwerze; `/rollback` wraca do poprzedniego.
 
@@ -70,6 +71,8 @@ Wszystko w `/etc/amp-tg-bot.env` ([przykład](deploy/amp-tg-bot.env.example)); p
 | `TG_CHAT_ID` | – | gdzie idą powiadomienia (twój prywatny czat albo grupa) |
 | `TG_ADMINS` | `TG_CHAT_ID` | ID użytkowników Telegrama, którzy mogą używać komend, po przecinku |
 | `BOT_LANG` | `pl` | domyślny język: `pl`, `en`, `ru`, `uk` (`/lang` zmienia go dla czatu) |
+| `AMP_URL` | – | adres panelu AMP, np. `http://127.0.0.1:8080` (dla `/servers`) |
+| `AMP_USER`, `AMP_PASS` | – | osobne konto AMP dla bota (bez 2FA) |
 | `RETENTION_DAYS` | `180` | jak długo trzymać historię graczy |
 | `BATTERY_WARN` | `45` | alert, gdy bateria spadnie poniżej tylu %; `0` wyłącza |
 | `TEMP_ALERT` | `85` | alert temperatury CPU, °C |

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0 (2026-10)
+
+- **`/servers`**: AMP instances with their state (🟢 running, 🔴 stopped, ⚫ instance off, …) and the number of players; tap one to **start, stop, restart or update** it. Everything except start asks for confirmation and warns when someone is playing. Actions taken from another chat are reported to the admin chat.
+- Talks to the AMP panel API with a separate AMP user (`AMP_URL`, `AMP_USER`, `AMP_PASS`); the session is renewed automatically.
+- **`--amp-test`**: checks the login, lists the instances and prints the API functions of your AMP version that the next features (backups, password, kick/ban, console) will use.
+
 ## 1.1.1 (2026-10)
 
 - Commands live only in the Telegram **Menu** button: the button keyboard under the message field is gone (the bot removes the old one on its next start or `/help`).

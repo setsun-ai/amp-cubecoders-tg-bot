@@ -14,6 +14,7 @@ Uzycie:
   bot.py --historia [N]       - ostatnie N sesji graczy (domyslnie 30)
   bot.py --gracz NAZWA        - sesje danego gracza (nick, SteamID lub UUID)
   bot.py --host       - stan laptopa (zasilanie, temperatura, playit)
+  bot.py --amp-test   - logowanie do AMP, lista instancji i funkcje API
   bot.py --selftest   - sprawdza, czy ta wersja dziala na tym serwerze (uzywane przy aktualizacji)
   bot.py --version    - numer wersji
 """
@@ -33,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -66,6 +67,10 @@ PLAYIT_SERVICE = os.environ.get("PLAYIT_SERVICE", "playit")
 WEEKLY_DAY = int(os.environ.get("WEEKLY_DAY", "6"))  # 0 = poniedzialek, 6 = niedziela
 WEEKLY_HOUR = int(os.environ.get("WEEKLY_HOUR", "20"))
 GITHUB_REPO = os.environ.get("GITHUB_REPO", "setsun-ai/amp-cubecoders-tg-bot")
+# panel AMP (ADS) i osobne konto dla bota; bez nich /servers jest wylaczone
+AMP_URL = os.environ.get("AMP_URL", "").rstrip("/")
+AMP_USER = os.environ.get("AMP_USER", "")
+AMP_PASS = os.environ.get("AMP_PASS", "")
 POLL_SECONDS = 2
 RESCAN_SECONDS = 30
 HOST_CHECK_SECONDS = 30
@@ -240,6 +245,43 @@ STRINGS = {
     "c_rollback": ("Powrót do poprzedniej wersji", "Back to the previous version", "Вернуть предыдущую версию",
                    "Повернути попередню версію"),
     "c_help": ("Lista komend", "Command list", "Список команд", "Список команд"),
+    "c_servers": ("Serwery: start, stop, restart, aktualizacja", "Servers: start, stop, restart, update",
+                  "Серверы: старт, стоп, перезапуск, обновление", "Сервери: старт, стоп, перезапуск, оновлення"),
+    # zarzadzanie AMP
+    "amp_off": ("AMP nie jest skonfigurowany: dopisz AMP_URL, AMP_USER i AMP_PASS do /etc/amp-tg-bot.env.",
+                "AMP is not configured: add AMP_URL, AMP_USER and AMP_PASS to /etc/amp-tg-bot.env.",
+                "AMP не настроен: добавь AMP_URL, AMP_USER и AMP_PASS в /etc/amp-tg-bot.env.",
+                "AMP не налаштовано: додай AMP_URL, AMP_USER і AMP_PASS до /etc/amp-tg-bot.env."),
+    "amp_error": ("❌ AMP: {err}", "❌ AMP: {err}", "❌ AMP: {err}", "❌ AMP: {err}"),
+    "srv_title": ("🖥 <b>Serwery</b> – wybierz:", "🖥 <b>Servers</b> – pick one:", "🖥 <b>Серверы</b> – выбери:",
+                  "🖥 <b>Сервери</b> – обери:"),
+    "srv_none": ("Brak instancji w AMP.", "No instances in AMP.", "В AMP нет инстансов.", "В AMP немає інстансів."),
+    "srv_players": ("👥 Gracze: {n}", "👥 Players: {n}", "👥 Игроков: {n}", "👥 Гравців: {n}"),
+    "srv_confirm": ("❓ Na pewno <b>{action}</b> – {name}?", "❓ Really <b>{action}</b> – {name}?",
+                    "❓ Точно <b>{action}</b> – {name}?", "❓ Точно <b>{action}</b> – {name}?"),
+    "srv_confirm_players": ("⚠️ Na serwerze gra teraz {n} os.!", "⚠️ {n} player(s) are on the server now!",
+                            "⚠️ Сейчас на сервере игроков: {n}!", "⚠️ Зараз на сервері гравців: {n}!"),
+    "srv_working": ("⏳ {action}: {name}…", "⏳ {action}: {name}…", "⏳ {action}: {name}…", "⏳ {action}: {name}…"),
+    "srv_done": ("✅ {action}: {name} – wysłane do AMP.", "✅ {action}: {name} – sent to AMP.",
+                 "✅ {action}: {name} – отправлено в AMP.", "✅ {action}: {name} – надіслано до AMP."),
+    "srv_audit": ("🛠 {who}: {action} – {name}", "🛠 {who}: {action} – {name}", "🛠 {who}: {action} – {name}",
+                  "🛠 {who}: {action} – {name}"),
+    "btn_yes": ("✅ Tak", "✅ Yes", "✅ Да", "✅ Так"),
+    "btn_back": ("↩️ Wróć", "↩️ Back", "↩️ Назад", "↩️ Назад"),
+    "btn_refresh": ("🔄 Odśwież", "🔄 Refresh", "🔄 Обновить", "🔄 Оновити"),
+    "act_start": ("▶️ Start", "▶️ Start", "▶️ Запуск", "▶️ Запуск"),
+    "act_stop": ("⏹ Stop", "⏹ Stop", "⏹ Стоп", "⏹ Стоп"),
+    "act_restart": ("🔁 Restart", "🔁 Restart", "🔁 Перезапуск", "🔁 Перезапуск"),
+    "act_update": ("⬆️ Aktualizacja", "⬆️ Update", "⬆️ Обновление", "⬆️ Оновлення"),
+    "st_ready": ("działa", "running", "работает", "працює"),
+    "st_stopped": ("zatrzymany", "stopped", "остановлен", "зупинено"),
+    "st_starting": ("uruchamia się", "starting", "запускается", "запускається"),
+    "st_stopping": ("zatrzymuje się", "stopping", "останавливается", "зупиняється"),
+    "st_updating": ("aktualizuje się", "updating", "обновляется", "оновлюється"),
+    "st_sleeping": ("uśpiony", "sleeping", "спит", "спить"),
+    "st_failed": ("błąd", "failed", "ошибка", "помилка"),
+    "st_off": ("instancja wyłączona", "instance off", "инстанс выключен", "інстанс вимкнено"),
+    "st_other": ("stan {n}", "state {n}", "состояние {n}", "стан {n}"),
 }
 
 
@@ -301,6 +343,17 @@ def read(path, default=None):
 
 
 # ---------- Telegram ----------
+
+def edit(chat_id, message_id, text, markup=None):
+    params = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
+              "disable_web_page_preview": "true"}
+    if markup:
+        params["reply_markup"] = json.dumps(markup)
+    try:
+        tg_api("editMessageText", params)
+    except Exception as e:  # np. "message is not modified" po odswiezeniu bez zmian
+        log(f"editMessageText: {getattr(e, 'code', type(e).__name__)}")
+
 
 def tg_api(method, params=None, timeout=10):
     data = urllib.parse.urlencode(params or {}).encode()
@@ -906,11 +959,140 @@ def maybe_weekly(db):
     send(weekly_summary(db))
 
 
+# ---------- AMP: API panelu ----------
+
+class AmpError(Exception):
+    pass
+
+
+def amp_unwrap(r):
+    # nowsze AMP opakowuja wynik w {"result": ...}; bledy wygladaja jak {"Title": ..., "Message": ...}
+    if isinstance(r, dict) and set(r) == {"result"}:
+        r = r["result"]
+    if isinstance(r, dict) and "Title" in r and "StackTrace" in r:
+        raise AmpError(r.get("Message") or r["Title"])
+    return r
+
+
+class Amp:
+    """Klient API AMP (ADS). Loguje sie przy pierwszym wywolaniu i ponownie, gdy sesja wygasnie."""
+
+    def __init__(self, url=None, user=None, password=None):
+        self.url = (url if url is not None else AMP_URL).rstrip("/")
+        self.user = user if user is not None else AMP_USER
+        self.password = password if password is not None else AMP_PASS
+        self.session = None
+
+    @property
+    def configured(self):
+        return bool(self.url and self.user and self.password)
+
+    def _post(self, path, payload, timeout=30):
+        req = urllib.request.Request(f"{self.url}/API/{path}", data=json.dumps(payload).encode(),
+                                     headers={"Accept": "application/json", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read().decode("utf-8", errors="replace").strip()
+        return json.loads(body) if body else None
+
+    def login(self, prefix=""):
+        r = amp_unwrap(self._post(f"{prefix}Core/Login", {"username": self.user, "password": self.password,
+                                                          "token": "", "rememberMe": False}))
+        if not isinstance(r, dict) or not r.get("success"):
+            reason = r.get("resultReason") if isinstance(r, dict) else r
+            raise AmpError(f"login: {reason}")
+        return r["sessionID"]
+
+    def call(self, method, **params):
+        for _ in range(2):
+            if not self.session:
+                self.session = self.login()
+            r = self._post(method, {"SESSIONID": self.session, **params})
+            if isinstance(r, dict) and r.get("Title") == "Unauthorized Access":
+                self.session = None  # sesja wygasla: logujemy sie jeszcze raz
+                continue
+            r = amp_unwrap(r)
+            if isinstance(r, dict) and r.get("Status") is False:
+                raise AmpError(r.get("Reason") or method)
+            return r
+        raise AmpError("Unauthorized Access")
+
+    def instances(self):
+        """Instancje gier (bez samego panelu ADS): name, friendly, module, running, state."""
+        out = []
+        for target in self.call("ADSModule/GetInstances") or []:
+            for i in target.get("AvailableInstances") or []:
+                if i.get("Module") == "ADS":
+                    continue
+                out.append({"name": i.get("InstanceName"), "id": i.get("InstanceID"),
+                            "friendly": i.get("FriendlyName") or i.get("InstanceName"),
+                            "module": i.get("ModuleDisplayName") or i.get("Module"),
+                            "running": bool(i.get("Running")), "state": i.get("AppState")})
+        return sorted(out, key=lambda x: (x["friendly"] or "").lower())
+
+    ACTIONS = {"start": "ADSModule/StartInstance", "stop": "ADSModule/StopInstance",
+               "restart": "ADSModule/RestartInstance", "update": "ADSModule/UpgradeInstance"}
+
+    def action(self, act, name):
+        return self.call(self.ACTIONS[act], InstanceName=name)
+
+
+# AppState z AMP -> (emoji, klucz tekstu)
+AMP_STATES = {0: ("🔴", "st_stopped"), 5: ("🟡", "st_starting"), 7: ("🟡", "st_starting"), 10: ("🟡", "st_starting"),
+              20: ("🟢", "st_ready"), 30: ("🟡", "st_starting"), 40: ("🟠", "st_stopping"), 45: ("🟠", "st_stopping"),
+              50: ("💤", "st_sleeping"), 70: ("⬆️", "st_updating"), 75: ("⬆️", "st_updating"),
+              100: ("❌", "st_failed")}
+
+
+def amp_state(inst, lang=None):
+    if not inst["running"]:
+        return "⚫", t("st_off", lang)
+    emoji, key = AMP_STATES.get(inst["state"], ("⚪", None))
+    return emoji, t(key, lang) if key else t("st_other", lang, n=inst["state"])
+
+
+def amp_test():
+    """--amp-test: logowanie, lista instancji i funkcje API przydatne dla bota."""
+    amp = Amp()
+    if not amp.configured:
+        print("Brak AMP_URL / AMP_USER / AMP_PASS w " + ENV_FILE)
+        return 1
+    print(f"Logowanie do {amp.url} jako {amp.user}...")
+    amp.session = amp.login()
+    print("OK, zalogowano.\n\nInstancje:")
+    insts = amp.instances()
+    for i in insts:
+        print(f"  {amp_state(i, 'pl')[0]} {i['name']:<20} {i['module'] or '':<14} running={i['running']} "
+              f"state={i['state']}")
+    keywords = re.compile(r"start|stop|restart|upgrade|update|backup|user|kick|ban|console|config|setting|"
+                          r"password|status|schedule|task", re.I)
+
+    def show(spec, title):
+        print(f"\n{title}:")
+        for module, methods in sorted((spec or {}).items()):
+            names = sorted(m for m in (methods or {}) if keywords.search(m))
+            if names:
+                print(f"  {module}: {', '.join(names)}")
+
+    show(amp.call("Core/GetAPISpec"), "API panelu (ADS)")
+    running = next((i for i in insts if i["running"] and i["id"]), None)
+    if running:
+        prefix = f"ADSModule/Servers/{running['id']}/API/"
+        try:
+            sid = amp.login(prefix)
+            spec = amp_unwrap(amp._post(prefix + "Core/GetAPISpec", {"SESSIONID": sid}))
+            show(spec, f"API instancji {running['name']}")
+        except Exception as e:
+            print(f"\nAPI instancji {running['name']}: blad {e}")
+    else:
+        print("\nZadna instancja nie dziala - uruchom jedna i powtorz, zeby zobaczyc API instancji.")
+    return 0
+
+
 # ---------- komendy na Telegramie ----------
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
-COMMANDS = [("online", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"), ("week", ""),
-            ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
+COMMANDS = [("online", ""), ("servers", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"),
+            ("week", ""), ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
            "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang"}
@@ -1052,6 +1234,7 @@ class Commands:
         self.db, self.instances = db, instances
         self.offset = None
         self.restart = False
+        self.amp = Amp()
 
     def poll(self, timeout):
         """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli)."""
@@ -1119,6 +1302,9 @@ class Commands:
             send(weekly_summary(self.db, lang=lang), chat)
         elif cmd == "status":
             send(cmd_status(self.instances, lang), chat)
+        elif cmd in ("servers", "serwery", "server"):
+            text, markup = self.servers_view(lang)
+            send(text, chat, markup=markup)
         elif cmd == "lang":
             if args and norm_lang(args[0]):
                 self.set_lang(chat, norm_lang(args[0]))
@@ -1155,6 +1341,86 @@ class Commands:
             except Exception:
                 pass
             self.set_lang(chat, lang, announce=False)
+        elif data == "srv" or data.startswith(("srv:", "do:", "do!:")):
+            lang = lang_for(chat)
+            text, markup = self.servers_callback(data, user, chat, lang)
+            edit(chat, cq["message"]["message_id"], text, markup)
+
+    # ---------- /servers ----------
+
+    def players_on(self, name):
+        inst = self.instances.get(name)
+        return len(inst.online) if inst else 0
+
+    def servers_view(self, lang):
+        if not self.amp.configured:
+            return t("amp_off", lang), None
+        try:
+            insts = self.amp.instances()
+        except Exception as e:
+            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]}
+        if not insts:
+            return t("srv_none", lang), None
+        rows = []
+        for i in insts:
+            emoji, _ = amp_state(i, lang)
+            n = self.players_on(i["name"])
+            rows.append([{"text": f"{emoji} {i['friendly']}" + (f" 👥{n}" if n else ""),
+                          "callback_data": f"srv:{i['name']}"[:64]}])
+        rows.append([self.btn("btn_refresh", "srv", lang)])
+        return t("srv_title", lang), {"inline_keyboard": rows}
+
+    @staticmethod
+    def btn(key, data, lang):
+        return {"text": t(key, lang), "callback_data": data[:64]}
+
+    def server_view(self, name, lang, note=""):
+        try:
+            inst = next((i for i in self.amp.instances() if i["name"] == name), None)
+        except Exception as e:
+            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
+        if inst is None:
+            return t("srv_none", lang), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
+        emoji, state = amp_state(inst, lang)
+        lines = [f"{emoji} <b>{esc(inst['friendly'])}</b>", f"🎮 {esc(inst['module'] or '?')} · {esc(state)}",
+                 t("srv_players", lang, n=self.players_on(name))]
+        if note:
+            lines += ["", note]
+        up = inst["running"] and inst["state"] not in (0, None)
+        acts = ["stop", "restart"] if up else ["start"]
+        rows = [[self.btn("act_" + a, f"do:{a}:{name}", lang) for a in acts],
+                [self.btn("act_update", f"do:update:{name}", lang)],
+                [self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
+        return "\n".join(lines), {"inline_keyboard": rows}
+
+    def servers_callback(self, data, user, chat, lang):
+        if not self.amp.configured:
+            return t("amp_off", lang), None
+        if data == "srv":
+            return self.servers_view(lang)
+        kind, _, rest = data.partition(":")
+        if kind == "srv":
+            return self.server_view(rest, lang)
+        act, _, name = rest.partition(":")
+        if act not in Amp.ACTIONS:
+            return self.servers_view(lang)
+        label = t("act_" + act, lang)
+        if kind == "do" and act != "start":  # wszystko poza startem wymaga potwierdzenia
+            text = t("srv_confirm", lang, action=label, name=esc(name))
+            n = self.players_on(name)
+            if n:
+                text += "\n" + t("srv_confirm_players", lang, n=n)
+            return text, {"inline_keyboard": [[self.btn("btn_yes", f"do!:{act}:{name}", lang),
+                                               self.btn("btn_back", f"srv:{name}", lang)]]}
+        try:
+            self.amp.action(act, name)
+        except Exception as e:
+            return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+        who = user.get("first_name") or str(user.get("id"))
+        log(f"AMP: {who} -> {act} {name}")
+        if str(chat) != str(CHAT_ID):  # admin dostaje slad kazdej akcji wykonanej z innego czatu
+            send(t("srv_audit", who=esc(who), action=t("act_" + act), name=esc(name)))
+        return self.server_view(name, lang, note=t("srv_done", lang, action=label, name=esc(name)))
 
     def set_lang(self, chat, lang, announce=True):
         meta_set(self.db, f"lang:{chat}", lang)
@@ -1296,6 +1562,8 @@ def main():
     elif args[0] == "--host":
         print(host_report())
         print(f"playit tryb: {playit_mode()}")
+    elif args[0] == "--amp-test":
+        sys.exit(amp_test())
     elif args[0] == "--selftest":
         selftest()
     elif args[0] == "--version":

@@ -267,3 +267,81 @@ def test_help_and_selftest_in_all_languages():
     for lang in bot.LANG_ORDER:
         text = bot.help_text(lang)
         assert all(f"/{cmd}" in text for cmd, _ in bot.COMMANDS)
+
+
+class FakeAmp(bot.Amp):
+    """AMP bez sieci: zapisuje wywolania, sesja wygasa raz."""
+
+    def __init__(self):
+        super().__init__("http://amp.test", "bot", "secret")
+        self.calls = []
+        self.expire_once = True
+
+    def _post(self, path, payload, timeout=30):
+        self.calls.append((path, payload))
+        if path.endswith("Core/Login"):
+            return {"success": True, "sessionID": f"s{len(self.calls)}"}
+        if self.expire_once and path == "ADSModule/GetInstances":
+            self.expire_once = False
+            return {"Title": "Unauthorized Access", "Message": "session expired"}
+        if path == "ADSModule/GetInstances":
+            return {"result": [{"AvailableInstances": [
+                {"InstanceName": "ADS01", "Module": "ADS", "Running": True, "AppState": 20},
+                {"InstanceName": "Valheim01", "InstanceID": "abc", "FriendlyName": "Valheim", "Module": "GenericModule",
+                 "ModuleDisplayName": "Valheim", "Running": True, "AppState": 20},
+                {"InstanceName": "Mc01", "InstanceID": "def", "FriendlyName": "Minecraft", "Module": "Minecraft",
+                 "Running": False, "AppState": 0}]}]}
+        if path == "ADSModule/StopInstance":
+            return {"Status": True}
+        if path == "ADSModule/UpgradeInstance":
+            return {"Status": False, "Reason": "Update already running"}
+        return {}
+
+
+def test_amp_relogin_and_instances():
+    amp = FakeAmp()
+    insts = amp.instances()
+    assert [i["name"] for i in insts] == ["Mc01", "Valheim01"]  # bez panelu ADS, po nazwie
+    assert sum(1 for p, _ in amp.calls if p == "Core/Login") == 2  # wygasla sesja -> drugie logowanie
+    assert bot.amp_state(insts[0], "en") == ("⚫", "instance off")
+    assert bot.amp_state(insts[1], "pl") == ("🟢", "działa")
+
+
+def test_servers_flow_with_confirmation(env, monkeypatch):
+    edits = []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    env.write("Valheim01", f"Got connection SteamID {SID_A}", "Got character ZDOID from Alice : 111:1")
+    env.sent.clear()
+
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/servers"})
+    buttons = [b["text"] for row in c.servers_view("en")[1]["inline_keyboard"] for b in row]
+    assert "🟢 Valheim 👥1" in buttons and "⚫ Minecraft" in buttons
+
+    def click(data):
+        c.handle_callback({"id": "q", "from": {"id": 1, "first_name": "Admin"}, "data": data,
+                           "message": {"chat": {"id": 1}, "message_id": 7}})
+        return edits[-1]
+
+    text, markup = click("do:stop:Valheim01")
+    assert "1" in text and "⚠️" in text  # ostrzezenie, ze ktos gra
+    assert not any(p == "ADSModule/StopInstance" for p, _ in c.amp.calls)
+    text, _ = click("do!:stop:Valheim01")
+    assert ("ADSModule/StopInstance", {"SESSIONID": c.amp.session, "InstanceName": "Valheim01"}) in c.amp.calls
+    assert "✅" in text
+    text, _ = click("do!:update:Valheim01")
+    assert "Update already running" in text
+    stranger = len(edits)
+    c.handle_callback({"id": "q", "from": {"id": 9}, "data": "do!:stop:Valheim01",
+                       "message": {"chat": {"id": 9}, "message_id": 1}})
+    assert len(edits) == stranger  # obcy nic nie zrobi
+
+
+def test_servers_without_amp_config(env):
+    c = bot.Commands(env.db, env.inst)
+    c.amp = bot.Amp("", "", "")
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/servers"})
+    assert "AMP_URL" in env.sent[-1]
