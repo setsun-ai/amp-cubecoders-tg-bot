@@ -1,0 +1,99 @@
+# amp-cubecoders-tg-bot 🎮
+
+[![CI](https://github.com/setsun-ai/amp-cubecoders-tg-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/setsun-ai/amp-cubecoders-tg-bot/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/setsun-ai/amp-cubecoders-tg-bot)](https://github.com/setsun-ai/amp-cubecoders-tg-bot/releases/latest)
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)
+[![Ліцензія: MIT](https://img.shields.io/badge/ліцензія-MIT-green)](LICENSE)
+
+🇬🇧 **[English](README.md)** · 🇵🇱 **[Polski](README.pl.md)** · 🇷🇺 **[Русский](README.ru.md)**
+
+**Telegram-бот для ігрових серверів в [AMP (CubeCoders)](https://cubecoders.com/AMP).** Повідомляє, хто зайшов і вийшов, веде історію гравців, надсилає підсумки тижня й стежить за машиною, на якій працюють сервери. Один файл на Python, лише стандартна бібліотека, без плагінів для AMP. Польська, англійська, російська та українська.
+
+```
+🆕 НОВИЙ ГРАВЕЦЬ!
+🟢 Alice заходить на сервер
+🎮 Valheim (Valheim01)
+🆔 SteamID: 76561198000000000
+👥 Онлайн: 1
+```
+
+## Що вміє
+
+- **Входи й виходи гравців** на всіх інстансах AMP, із часом гри. Valheim: SteamID із посиланням на профіль. Minecraft: UUID.
+- **Нові ігри без налаштування**: бот бере правила розпізнавання гравців, які вже є в AMP, з файлу `.kvp` кожного інстансу (`Console.UserJoinRegex` / `Console.UserLeaveRegex`). Якщо гра їх не має, прийде ⚠️ з проханням надіслати рядок із логу.
+- **🆕 Новий гравець**: сповіщення, коли заходить той, кого бот ще не бачив.
+- **💀 Смерті** (Valheim, Minecraft) з лічильником за день.
+- **Підсумки тижня** в неділю ввечері: час гри за серверами, рейтинг, найактивніша година.
+- **Машина**: сповіщення, коли батарея ноутбука падає нижче порогу, CPU перегрівається або падає тунель [playit.gg](https://playit.gg).
+- **Команди** (лише для адміна, у кнопці *Menu* Telegram): `/online`, `/status`, `/history [N]`, `/player НІК`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
+- **Мови**: `/lang` із кнопками, запам'ятовується для кожного чату.
+- **Самооновлення**: `/update` встановлює найновіший реліз із GitHub, попередньо перевіривши його на вашому сервері; `/rollback` повертає попередню версію.
+
+Бот читає `AMP_Logs/AMPLOG_*.log` кожного інстансу. Фальшиві входи, написані в ігровому чаті (`<Bob> Alice joined the game`), ігноруються. Справжні IP гравців видно лише при прямому підключенні; через тунель (наприклад, playit.gg) усі приходять з адреси тунелю.
+
+## Встановлення (Linux, AMP у `/home/amp/.ampdata`)
+
+1. Створіть бота в [@BotFather](https://t.me/BotFather) (`/newbot`) і напишіть йому будь-що.
+2. Від root встановіть скрипт оновлення та завантажте бота:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/setsun-ai/amp-cubecoders-tg-bot/main/deploy/update.sh -o /usr/local/bin/amp-tg-bot-update
+   chmod +x /usr/local/bin/amp-tg-bot-update
+   mkdir -p /opt/amp-tg-bot && chown amp:amp /opt/amp-tg-bot
+   curl -fsSL https://raw.githubusercontent.com/setsun-ai/amp-cubecoders-tg-bot/main/bot.py -o /opt/amp-tg-bot/bot.py
+   ```
+
+3. Збережіть токен (під час вставлення його не видно) і дізнайтеся свій chat ID:
+
+   ```bash
+   read -rsp "Token: " T && printf 'TG_TOKEN=%s\n' "$T" > /etc/amp-tg-bot.env && chmod 600 /etc/amp-tg-bot.env
+   python3 /opt/amp-tg-bot/bot.py --chatid
+   echo 'TG_CHAT_ID=123456789' >> /etc/amp-tg-bot.env
+   python3 /opt/amp-tg-bot/bot.py --test
+   ```
+
+4. Служба systemd:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/setsun-ai/amp-cubecoders-tg-bot/main/deploy/amp-tg-bot.service -o /etc/systemd/system/amp-tg-bot.service
+   systemctl daemon-reload && systemctl enable --now amp-tg-bot
+   amp-tg-bot-update
+   ```
+
+## Налаштування
+
+Усе в `/etc/amp-tg-bot.env` ([приклад](deploy/amp-tg-bot.env.example)); після зміни `systemctl restart amp-tg-bot`.
+
+| Змінна | За замовчуванням | Значення |
+|---|---|---|
+| `TG_TOKEN` | – | токен бота від @BotFather |
+| `TG_CHAT_ID` | – | куди йдуть сповіщення (ваш особистий чат або група) |
+| `TG_ADMINS` | `TG_CHAT_ID` | ID користувачів Telegram, яким доступні команди, через кому |
+| `BOT_LANG` | `pl` | мова за замовчуванням: `pl`, `en`, `ru`, `uk` (`/lang` змінює її для чату) |
+| `RETENTION_DAYS` | `180` | скільки зберігати історію гравців |
+| `BATTERY_WARN` | `45` | сповіщення, коли батарея нижче цього %; `0` вимикає |
+| `TEMP_ALERT` | `85` | поріг температури CPU, °C |
+| `PLAYIT_SERVICE` | `playit` | служба systemd агента playit.gg |
+| `WEEKLY_DAY`, `WEEKLY_HOUR` | `6`, `20` | підсумки тижня: день (0 = понеділок) і година |
+| `AMP_INSTANCES` | `/home/amp/.ampdata/instances` | де AMP зберігає інстанси |
+| `DB_PATH` | `/var/lib/amp-tg-bot/players.db` | історія гравців |
+
+## Оновлення
+
+- У Telegram: `/update`. Бот завантажує найновіший реліз, один раз запускає його з `--selftest`, замінює себе й перезапускається. Якщо перевірка не пройшла, лишається стара версія. `/rollback` повертає попередню.
+- У терміналі, якщо бот не відповідає: `amp-tg-bot-update` або `amp-tg-bot-update --rollback`.
+
+Файл налаштувань та історія гравців не змінюються.
+
+## Розробка
+
+```bash
+pip install -r requirements-dev.txt
+ruff check . && pytest -q
+```
+
+Див. [CONTRIBUTING.md](CONTRIBUTING.md). Приватність: [PRIVACY.md](PRIVACY.md). Безпека: [SECURITY.md](SECURITY.md).
+
+## Ліцензія
+
+[MIT](LICENSE)

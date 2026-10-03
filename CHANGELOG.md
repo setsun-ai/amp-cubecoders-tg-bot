@@ -1,29 +1,25 @@
-# Zmiany
+# Changelog
 
-## 1.1.0
+## 1.1.1 (2026-10)
 
-- Języki: polski, angielski, rosyjski i ukraiński. `/lang` pokazuje przyciski, wybór jest
-  zapamiętywany osobno dla każdego czatu; powiadomienia idą w języku czatu admina, menu komend
-  zmienia się razem z językiem. Domyślny język: `BOT_LANG` (domyślnie `pl`).
-- Komendy mają teraz neutralne nazwy: `/history`, `/player`, `/week`, `/version`, `/help`;
-  stare polskie (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) dalej działają.
-- Obcy dostają odmowę w języku swojego Telegrama.
+- Commands live only in the Telegram **Menu** button: the button keyboard under the message field is gone (the bot removes the old one on its next start or `/help`).
+- Documentation in four languages: README in English, Polish, Russian and Ukrainian; new PRIVACY.md, SECURITY.md and CONTRIBUTING.md.
 
-## 1.0.0
+## 1.1.0 (2026-10)
 
-Pierwsze wydanie.
+- **Languages**: Polish, English, Russian and Ukrainian. `/lang` shows buttons; the choice is remembered per chat. Notifications follow the language of the admin chat, and the command menu changes with it. Default: `BOT_LANG` (`pl`).
+- Commands have language-neutral names: `/history`, `/player`, `/week`, `/version`, `/help`; the old Polish ones (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) still work.
+- Strangers are turned away in the language of their Telegram app.
 
-- Powiadomienia na Telegramie o wejściach i wyjściach graczy na instancjach AMP (CubeCoders):
-  nick, czas gry, SteamID (Valheim), UUID (Minecraft).
-- Reguły rozpoznawania graczy brane automatycznie z plików `.kvp` instancji AMP, więc nowe gry
-  zwykle działają od razu; Minecraft i dodatki dla Valheima wbudowane. Ostrzeżenie, gdy
-  nowej gry nie da się rozpoznać.
-- 🆕 alert o graczu, którego bot jeszcze nie widział, 💀 śmierci (Valheim, Minecraft).
-- Przy starcie bot odczytuje bieżący log, więc wie, kto już gra.
-- Komendy: `/online`, `/status`, `/historia`, `/gracz`, `/tydzien`, `/wersja`, `/update`,
-  `/rollback`, `/pomoc`; menu komend i klawiatura tylko dla admina; obcy dostają odmowę,
-  a admin raz dowiaduje się, kto pisał.
-- Podsumowanie tygodnia w niedzielę wieczorem.
-- Pilnowanie laptopa: bateria poniżej progu, temperatura CPU, tunel playit.gg.
-- Aktualizacja z GitHuba: `/update` na Telegramie albo `amp-tg-bot-update` w terminalu; nowa
-  wersja jest testowana przed podmianą, stara zostaje jako kopia do `/rollback`.
+## 1.0.0 (2026-10)
+
+First release.
+
+- Telegram notifications when players join or leave AMP (CubeCoders) instances: name, play time, SteamID (Valheim), UUID (Minecraft).
+- Player detection rules are read from each instance's AMP `.kvp` file, so new games usually work right away; Minecraft and Valheim extras are built in. A warning when a new game can't be recognised.
+- 🆕 alert for a player the bot has never seen, 💀 deaths (Valheim, Minecraft).
+- On start the bot reads the current log, so it knows who is already playing.
+- Admin-only commands with a Telegram menu; strangers are refused and the admin learns once who wrote.
+- Weekly summary on Sunday evening.
+- Machine watch: battery below a threshold, CPU temperature, playit.gg tunnel.
+- Updates from GitHub: `/update` in Telegram or `amp-tg-bot-update` in a terminal; the new version is tested before the swap and the old one is kept for `/rollback`.

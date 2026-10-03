@@ -33,7 +33,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -914,8 +914,8 @@ COMMANDS = [("online", ""), ("status", ""), ("history", " [N]"), ("player", " NI
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
            "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang"}
-KEYBOARD = {"keyboard": [["/online", "/status"], ["/history", "/week"]], "resize_keyboard": True,
-            "is_persistent": True}
+# komendy sa tylko pod przyciskiem "Menu"; to chowa klawiature z przyciskami z wersji 1.0.0-1.1.0
+NO_KEYBOARD = {"remove_keyboard": True}
 LANG_BUTTONS = {"inline_keyboard": [[{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("pl", "en")],
                                     [{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("ru", "uk")]]}
 
@@ -1135,7 +1135,7 @@ class Commands:
         elif cmd == "rollback":
             self.rollback(chat, lang)
         else:
-            send(help_text(lang), chat, markup=KEYBOARD)
+            send(help_text(lang), chat, markup=NO_KEYBOARD)
 
     def handle_callback(self, cq):
         user = cq.get("from", {})
@@ -1161,7 +1161,7 @@ class Commands:
         CHAT_LANGS[str(chat)] = lang
         if announce:
             send(t("lang_set", lang, name=LANGS[lang]), chat)
-        send(help_text(lang), chat, markup=KEYBOARD)
+        send(help_text(lang), chat, markup=NO_KEYBOARD)
         if chat in ADMINS:
             set_menu(chat)
 
@@ -1228,7 +1228,8 @@ def run():
                 if old:
                     db.execute("DELETE FROM meta WHERE key='updated_from'")
                     db.commit()
-                send("\n".join([head, t("tracking", list=tracked), t("commands_hint")] + host.startup_notes()))
+                send("\n".join([head, t("tracking", list=tracked), t("commands_hint")] + host.startup_notes()),
+                     markup=NO_KEYBOARD)
                 for admin in ADMINS:
                     set_menu(admin)
             startup = False

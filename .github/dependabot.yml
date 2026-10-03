@@ -1,0 +1,7 @@
+# Keeps the GitHub Actions in the workflows up to date (the bot itself has no dependencies).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
