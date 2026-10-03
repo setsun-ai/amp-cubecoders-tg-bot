@@ -27,6 +27,7 @@
 - **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats or the [playit.gg](https://playit.gg) tunnel goes down.
 - **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
 - **Server control** (`/servers`): start, stop, restart and update AMP instances with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`.
+- **AMP panel on Telegram**: updates, backups and downloads started from the bot or the panel show up as one message with a live progress bar (▓▓▓▓░░░░░░ 40%), edited in place until ✅ done or ❌ failed; servers that start, stop or crash are reported too (`AMP_NOTIFY=0` turns it off).
 - **Languages**: `/lang` with buttons, remembered per chat.
 - **Self-update**: `/update` installs the newest GitHub release after testing it on your server; `/rollback` goes back.
 
@@ -73,6 +74,7 @@ All in `/etc/amp-tg-bot.env` ([example](deploy/amp-tg-bot.env.example)); restart
 | `BOT_LANG` | `pl` | default language: `pl`, `en`, `ru`, `uk` (`/lang` changes it per chat) |
 | `AMP_URL` | – | AMP panel address, e.g. `http://127.0.0.1:8080` (for `/servers`) |
 | `AMP_USER`, `AMP_PASS` | – | a separate AMP user for the bot (no 2FA) |
+| `AMP_NOTIFY` | `1` | AMP tasks with progress and server state changes on Telegram; `0` = off |
 | `RETENTION_DAYS` | `180` | how long the player history is kept |
 | `BATTERY_WARN` | `45` | alert when the battery drops below this %; `0` turns it off |
 | `TEMP_ALERT` | `85` | CPU temperature alert, °C |

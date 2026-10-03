@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -71,6 +71,9 @@ GITHUB_REPO = os.environ.get("GITHUB_REPO", "setsun-ai/amp-cubecoders-tg-bot")
 AMP_URL = os.environ.get("AMP_URL", "").rstrip("/")
 AMP_USER = os.environ.get("AMP_USER", "")
 AMP_PASS = os.environ.get("AMP_PASS", "")
+AMP_NOTIFY = os.environ.get("AMP_NOTIFY", "1") != "0"  # zadania i zmiany stanu z panelu AMP na Telegram
+AMP_TASK_SECONDS = 5
+AMP_STATE_SECONDS = 30
 POLL_SECONDS = 2
 RESCAN_SECONDS = 30
 HOST_CHECK_SECONDS = 30
@@ -282,6 +285,16 @@ STRINGS = {
     "st_failed": ("błąd", "failed", "ошибка", "помилка"),
     "st_off": ("instancja wyłączona", "instance off", "инстанс выключен", "інстанс вимкнено"),
     "st_other": ("stan {n}", "state {n}", "состояние {n}", "стан {n}"),
+    # powiadomienia z panelu AMP
+    "task_running": ("⏳ <b>{inst}</b>: {name}", "⏳ <b>{inst}</b>: {name}", "⏳ <b>{inst}</b>: {name}",
+                     "⏳ <b>{inst}</b>: {name}"),
+    "task_done": ("✅ <b>{inst}</b>: {name} – gotowe", "✅ <b>{inst}</b>: {name} – done",
+                  "✅ <b>{inst}</b>: {name} – готово", "✅ <b>{inst}</b>: {name} – готово"),
+    "task_failed": ("❌ <b>{inst}</b>: {name} – nie powiodło się", "❌ <b>{inst}</b>: {name} – failed",
+                    "❌ <b>{inst}</b>: {name} – не удалось", "❌ <b>{inst}</b>: {name} – не вдалося"),
+    "state_change": ("{emoji} <b>{inst}</b>: {state}", "{emoji} <b>{inst}</b>: {state}",
+                     "{emoji} <b>{inst}</b>: {state}", "{emoji} <b>{inst}</b>: {state}"),
+    "panel": ("panel AMP", "AMP panel", "панель AMP", "панель AMP"),
 }
 
 
@@ -375,8 +388,7 @@ def send(text, chat_id=None, markup=None):
         params["reply_markup"] = json.dumps(markup)
     for attempt in range(3):
         try:
-            tg_api("sendMessage", params)
-            return
+            return (tg_api("sendMessage", params).get("result") or {}).get("message_id")
         except Exception as e:  # nie logujemy URL-a, bo zawiera token
             log(f"Blad Telegrama ({getattr(e, 'code', type(e).__name__)}), proba {attempt + 1}/3")
             time.sleep(3 * (attempt + 1))
@@ -982,6 +994,7 @@ class Amp:
         self.user = user if user is not None else AMP_USER
         self.password = password if password is not None else AMP_PASS
         self.session = None
+        self.sessions = {}  # prefiks instancji -> sesja (API instancji przez panel ADS)
 
     @property
     def configured(self):
@@ -1029,6 +1042,50 @@ class Amp:
                             "running": bool(i.get("Running")), "state": i.get("AppState")})
         return sorted(out, key=lambda x: (x["friendly"] or "").lower())
 
+    def instance_call(self, inst_id, method, **params):
+        """Wywolanie API konkretnej instancji przez panel (ADSModule/Servers/<id>/API/...)."""
+        prefix = f"ADSModule/Servers/{inst_id}/API/"
+        for _ in range(2):
+            if not self.sessions.get(prefix):
+                self.sessions[prefix] = self.login(prefix)
+            r = self._post(prefix + method, {"SESSIONID": self.sessions[prefix], **params})
+            if isinstance(r, dict) and r.get("Title") == "Unauthorized Access":
+                self.sessions.pop(prefix, None)
+                continue
+            return amp_unwrap(r)
+        raise AmpError("Unauthorized Access")
+
+    @staticmethod
+    def norm_tasks(raw):
+        """RunningTask z AMP -> {"id", "name", "desc", "pct", "failed"}; brakujace pola sa tolerowane."""
+        out = []
+        for task in raw or []:
+            if not isinstance(task, dict):
+                continue
+            name = task.get("Name") or task.get("Description") or "?"
+            desc = task.get("Description") if task.get("Description") != name else ""
+            pct = task.get("ProgressPercent")
+            if task.get("IsIndeterminate") or not isinstance(pct, (int, float)) or pct < 0:
+                pct = None
+            state = str(task.get("State", "")).lower()
+            out.append({"id": str(task.get("Id") or name), "name": name, "desc": desc or "",
+                        "pct": pct, "failed": state in ("failed", "faulted", "error", "-1")})
+        return out
+
+    def tasks(self, instances=None):
+        """Zadania w toku: panelu i dzialajacych instancji. Zwraca {(zrodlo, id zadania): zadanie}."""
+        found = {}
+        sources = [("", None)] + [(i["friendly"], i["id"]) for i in instances or [] if i["running"] and i["id"]]
+        for label, inst_id in sources:
+            try:
+                raw = self.call("Core/GetTasks") if inst_id is None else self.instance_call(inst_id, "Core/GetTasks")
+            except Exception as e:  # jedna instancja bez odpowiedzi nie moze zatrzymac reszty
+                log(f"AMP GetTasks {label or 'ADS'}: {e}")
+                continue
+            for task in self.norm_tasks(raw):
+                found[(label, task["id"])] = task
+        return found
+
     ACTIONS = {"start": "ADSModule/StartInstance", "stop": "ADSModule/StopInstance",
                "restart": "ADSModule/RestartInstance", "update": "ADSModule/UpgradeInstance"}
 
@@ -1048,6 +1105,89 @@ def amp_state(inst, lang=None):
         return "⚫", t("st_off", lang)
     emoji, key = AMP_STATES.get(inst["state"], ("⚪", None))
     return emoji, t(key, lang) if key else t("st_other", lang, n=inst["state"])
+
+
+def progress_bar(pct):
+    filled = int(round(pct / 10))
+    return "▓" * filled + "░" * (10 - filled) + f" {pct:.0f}%"
+
+
+class AmpWatcher:
+    """
+    Panel AMP na Telegramie: zadania w toku (aktualizacja, backup, pobieranie) jako jedna wiadomosc
+    z paskiem postepu, edytowana w miejscu, oraz zmiany stanu instancji (start, stop, awaria).
+    """
+
+    def __init__(self, amp):
+        self.amp = amp
+        self.tasks = {}  # (zrodlo, id) -> {"msg": message_id, "text": ostatni tekst, "edited": czas}
+        self.states = None  # nazwa -> (running, AppState); None = jeszcze nie znamy
+        self.instances = []
+        self.last_tasks = self.last_states = 0
+
+    def task_text(self, label, task, final=None):
+        inst = esc(label or t("panel"))
+        if final:
+            return t(final, inst=inst, name=esc(task["name"]))
+        lines = [t("task_running", inst=inst, name=esc(task["name"]))]
+        if task["desc"]:
+            lines.append(esc(task["desc"]))
+        if task["pct"] is not None:
+            lines.append(progress_bar(task["pct"]))
+        return "\n".join(lines)
+
+    def check_tasks(self):
+        current = self.amp.tasks(self.instances)
+        now = time.time()
+        for key, task in current.items():
+            text = self.task_text(key[0], task)
+            known = self.tasks.get(key)
+            if known is None:
+                self.tasks[key] = {"msg": send(text), "text": text, "edited": now, "task": task}
+            elif text != known["text"] and now - known["edited"] >= 10:  # Telegram nie lubi czestych edycji
+                if known["msg"]:
+                    edit(CHAT_ID, known["msg"], text)
+                known.update(text=text, edited=now, task=task)
+            else:
+                known["task"] = task
+        for key in [k for k in self.tasks if k not in current]:  # zadanie zniknelo = skonczone
+            known = self.tasks.pop(key)
+            final = "task_failed" if known["task"]["failed"] else "task_done"
+            text = self.task_text(key[0], known["task"], final)
+            if known["msg"]:
+                edit(CHAT_ID, known["msg"], text)
+            else:
+                send(text)
+
+    def check_states(self):
+        self.instances = self.amp.instances()
+        states = {i["name"]: (i["running"], i["state"]) for i in self.instances}
+        if self.states is not None:
+            for inst in self.instances:
+                before = self.states.get(inst["name"])
+                if before is not None and before != states[inst["name"]] and self.stable(inst):
+                    emoji, state = amp_state(inst)
+                    send(t("state_change", emoji=emoji, inst=esc(inst["friendly"]), state=esc(state)))
+        self.states = states
+
+    @staticmethod
+    def stable(inst):
+        # stany przejsciowe (uruchamia sie, zatrzymuje sie) widac w zadaniach; tu tylko wynik
+        return not inst["running"] or inst["state"] in (0, 20, 50, 100)
+
+    def poll(self):
+        if not (AMP_NOTIFY and self.amp.configured):
+            return
+        now = time.time()
+        try:
+            if now - self.last_states >= AMP_STATE_SECONDS:
+                self.last_states = now
+                self.check_states()
+            if now - self.last_tasks >= AMP_TASK_SECONDS:
+                self.last_tasks = now
+                self.check_tasks()
+        except Exception as e:  # AMP chwilowo niedostepny: sprobujemy przy nastepnym obrocie
+            log(f"AMP watcher: {e}")
 
 
 def amp_test():
@@ -1465,6 +1605,7 @@ def run():
     instances = {}
     host = HostMonitor()
     commands = Commands(db, instances)
+    amp_watch = AmpWatcher(commands.amp)
     startup = True
     last_scan = last_clean = last_host = 0
     log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
@@ -1518,6 +1659,7 @@ def run():
             db.execute("DELETE FROM deaths WHERE ts < ?", (cutoff,))
             db.commit()
             last_clean = now
+        amp_watch.poll()
         commands.poll(POLL_SECONDS)
 
 

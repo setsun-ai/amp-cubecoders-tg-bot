@@ -345,3 +345,83 @@ def test_servers_without_amp_config(env):
     c.amp = bot.Amp("", "", "")
     c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/servers"})
     assert "AMP_URL" in env.sent[-1]
+
+
+class TaskAmp(bot.Amp):
+    """AMP z zadaniami: panel ADS i jedna instancja; testy zmieniaja self.ads_tasks / self.inst_tasks."""
+
+    def __init__(self):
+        super().__init__("http://amp.test", "bot", "secret")
+        self.ads_tasks, self.inst_tasks = [], []
+        self.app_state, self.running = 20, True
+
+    def _post(self, path, payload, timeout=30):
+        if path.endswith("Core/Login"):
+            return {"success": True, "sessionID": "s"}
+        if path == "ADSModule/GetInstances":
+            inst = {"InstanceName": "Valheim01", "InstanceID": "abc", "FriendlyName": "Valheim",
+                    "Module": "GenericModule", "Running": self.running, "AppState": self.app_state}
+            return [{"AvailableInstances": [inst]}]
+        if path == "Core/GetTasks":
+            return self.ads_tasks
+        if path == "ADSModule/Servers/abc/API/Core/GetTasks":
+            return {"result": self.inst_tasks}
+        return {}
+
+
+@pytest.fixture
+def watcher(env, monkeypatch):
+    edits = []
+    ids = iter(range(100, 200))
+
+    def fake_send(text, chat_id=None, markup=None):
+        env.sent.append(text)
+        return next(ids)
+
+    monkeypatch.setattr(bot, "send", fake_send)
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((mid, text)))
+    w = bot.AmpWatcher(TaskAmp())
+    w.check_states()  # pierwsze odczytanie stanow nic nie wysyla
+    return w, edits
+
+
+def test_task_progress_is_one_message_edited_in_place(watcher, env, monkeypatch):
+    w, edits = watcher
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    w.amp.inst_tasks = [{"Id": "t1", "Name": "Updating Valheim", "Description": "Downloading", "ProgressPercent": 20}]
+    w.check_tasks()
+    assert env.sent == ["⏳ <b>Valheim</b>: Updating Valheim\nDownloading\n▓▓░░░░░░░░ 20%"]
+    w.amp.inst_tasks[0]["ProgressPercent"] = 60
+    clock[0] += 3
+    w.check_tasks()
+    assert edits == []  # za wczesnie na kolejna edycje
+    clock[0] += 10
+    w.check_tasks()
+    assert edits[-1] == (100, "⏳ <b>Valheim</b>: Updating Valheim\nDownloading\n▓▓▓▓▓▓░░░░ 60%")
+    w.amp.inst_tasks = []
+    w.check_tasks()
+    assert edits[-1] == (100, "✅ <b>Valheim</b>: Updating Valheim – gotowe")
+    assert len(env.sent) == 1
+
+
+def test_failed_panel_task_and_indeterminate(watcher, env):
+    w, edits = watcher
+    w.amp.ads_tasks = [{"Id": "b", "Name": "Backup", "IsIndeterminate": True, "ProgressPercent": 0, "State": "Failed"}]
+    w.check_tasks()
+    assert env.sent[-1] == "⏳ <b>panel AMP</b>: Backup"
+    w.amp.ads_tasks = []
+    w.check_tasks()
+    assert edits[-1] == (100, "❌ <b>panel AMP</b>: Backup – nie powiodło się")
+
+
+def test_state_changes_from_the_panel(watcher, env):
+    w, _ = watcher
+    w.amp.app_state = 10  # uruchamia sie - stan przejsciowy, bez wiadomosci
+    w.check_states()
+    assert env.sent == []
+    w.amp.app_state = 0
+    w.check_states()
+    w.amp.app_state = 100
+    w.check_states()
+    assert env.sent == ["🔴 <b>Valheim</b>: zatrzymany", "❌ <b>Valheim</b>: błąd"]
