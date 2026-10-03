@@ -1,2 +1,2 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# LF everywhere: the bot and its scripts run on Linux
+* text=auto eol=lf

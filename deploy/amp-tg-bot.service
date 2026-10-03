@@ -1,0 +1,15 @@
+[Unit]
+Description=AMP -> Telegram: powiadomienia o graczach
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=amp
+EnvironmentFile=/etc/amp-tg-bot.env
+StateDirectory=amp-tg-bot
+ExecStart=/usr/bin/python3 /opt/amp-tg-bot/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

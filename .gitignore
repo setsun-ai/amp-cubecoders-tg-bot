@@ -1,0 +1,13 @@
+# --- secrets and private data: NEVER commit ---
+.env
+*.env
+!deploy/amp-tg-bot.env.example
+*.db
+*.sqlite3
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/

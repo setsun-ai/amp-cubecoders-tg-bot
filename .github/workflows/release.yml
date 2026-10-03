@@ -1,0 +1,38 @@
+# Pushing a version tag (git tag v1.2.3 && git push origin v1.2.3) publishes a GitHub release:
+# the tag must match VERSION in bot.py, lint + tests must pass, and the release notes are the
+# matching "## 1.2.3" section of CHANGELOG.md. The bot's /update command installs the latest release.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      - run: python -m pytest -q
+      - name: The tag matches VERSION in bot.py
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(python bot.py --version)" = "$version" || { echo "bot.py is not $version"; exit 1; }
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '/^## / { if (found) exit; if ($2 == v) { found = 1; next } } found' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

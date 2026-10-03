@@ -1,0 +1,33 @@
+# Lint + tests for every pull request and every push to main.
+# No secrets: the tests never talk to Telegram, AMP or the internet.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      - run: python -m pytest -q
+      - run: python bot.py --version
+      - name: Update script parses and passes shellcheck (errors only)
+        run: bash -n deploy/update.sh && shellcheck -S error deploy/update.sh
