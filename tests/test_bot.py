@@ -163,7 +163,8 @@ def test_stranger_is_rejected_and_reported_once(env):
     for _ in range(2):
         c.handle({"chat": {"id": 9}, "from": {"id": 9, "first_name": "Obcy"}, "text": "/online"})
     assert sum("Ktoś pisze do bota" in m for m in env.sent) == 1
-    assert env.sent.count("⛔ This is a private bot.") == 2  # obcy bez language_code: po angielsku
+    assert "owner got your request" in env.sent[1]  # obcy bez language_code: po angielsku
+    assert env.sent[-1] == "⛔ This is a private bot."  # druga wiadomosc: bez nowej prosby
 
 
 def test_battery_warning(monkeypatch, env):
@@ -254,7 +255,7 @@ def test_language_switch(env):
 def test_stranger_gets_answer_in_own_language(env):
     c = bot.Commands(env.db, env.inst)
     c.handle({"chat": {"id": 9}, "from": {"id": 9, "first_name": "X", "language_code": "ru"}, "text": "/x"})
-    assert env.sent[-1] == "⛔ Это приватный бот."
+    assert env.sent[-1].startswith("⛔ Это приватный бот")
 
 
 def test_old_polish_notes_are_translated(env):
@@ -540,3 +541,66 @@ def test_stranger_cannot_type_into_console(env, monkeypatch):
     c.awaiting["9"] = {"kind": "console", "name": "Valheim01"}
     c.handle_text({"chat": {"id": 9}, "from": {"id": 9}, "text": "stop", "message_id": 1})
     assert not any(p.endswith("SendConsoleMessage") for p, _ in c.amp.calls)
+
+
+def test_friend_gets_only_assigned_servers(env, monkeypatch):
+    edits, menus, sent_to = [], [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "set_menu", lambda chat, commands=None: menus.append((chat, commands)))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+    friend = {"id": 42, "first_name": "Kumpel", "username": "kumpel", "language_code": "uk"}
+
+    def click(data, user):
+        c.handle_callback({"id": "q", "from": user, "data": data, "message": {"chat": {"id": user["id"]},
+                                                                              "message_id": 7}})
+        return edits[-1]
+
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})
+    request = next(m for chat, _, m in sent_to if chat is None)
+    assert request["inline_keyboard"][0][0]["callback_data"] == "fr:42"  # prosba do admina z przyciskiem
+
+    admin = {"id": 1, "first_name": "Admin"}
+    text, markup = click("fr:42", admin)
+    assert "Kumpel @kumpel" in text and "⬜ Valheim" in str(markup)
+    click("frt:42:1", admin)  # Valheim (po nazwie: Mc01, Valheim01)
+    text, _ = click("frs:42", admin)
+    assert bot.friend_get(env.db, 42)["instances"] == ["Valheim01"] and "Valheim" in text
+    assert any(chat == 42 and "/servers" in msg for chat, msg, _ in sent_to)  # znajomy dostal wiadomosc...
+    assert (42, bot.FRIEND_COMMANDS) in menus and bot.lang_for(42) == "uk"  # ...i swoje menu, po ukrainsku
+
+    sent_to.clear()
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/servers"})
+    buttons = [b["text"] for row in sent_to[-1][2]["inline_keyboard"] for b in row]
+    assert any("Valheim" in b for b in buttons) and not any("Minecraft" in b for b in buttons)
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/history"})
+    assert "/servers" in sent_to[-1][1] and "/history" not in sent_to[-1][1]  # tylko komendy znajomego
+
+    text, markup = click("srv:Valheim01", friend)
+    assert "pw:Valheim01" not in str(markup)  # bez hasel
+    n = len(edits)
+    click("srv:Mc01", friend)
+    click("pw:Valheim01", friend)
+    click("frl", friend)
+    assert len(edits) == n  # cudzy serwer, hasla i /friends - nic sie nie dzieje
+
+    sent_to.clear()
+    click("do!:stop:Valheim01", friend)
+    assert any(p == "ADSModule/StopInstance" for p, _ in c.amp.calls)
+    assert any(chat is None and "Kumpel" in msg for chat, msg, _ in sent_to)  # admin widzi, co zrobil
+
+    click("con:Valheim01", friend)
+    c.handle_text({"chat": {"id": 42}, "from": friend, "text": "say hej", "message_id": 5})
+    click("con!:Valheim01", friend)
+    assert [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")][-1] == "say hej"
+
+    click("fr:42", admin)
+    click("frd:42", admin)
+    assert bot.friend_get(env.db, 42) is None
+    n = len(edits)
+    click("srv:Valheim01", friend)
+    assert len(edits) == n  # po usunieciu - znowu obcy

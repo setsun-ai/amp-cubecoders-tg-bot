@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.0 (2026-10)
+
+- **Friends** (`/friends`): someone who writes to the bot becomes a request with a ➕ button; you tick the servers they may manage. A friend gets their own menu (`/servers`, `/lang`, `/help`) and only those servers - start, stop, restart, game update, backup, players with kick/ban, console; no passwords, no player alerts, no history or system commands. Their every action is reported to you with their name; 🗑 removes the access.
+- The admin sees the Telegram @username of whoever did something on a server.
+
 ## 1.5.0 (2026-10)
 
 - **Less noise from AMP:** a task shows up only when it runs longer than 15 s (`AMP_TASK_MIN_SECONDS`), and routine ones such as the hourly "Updating remote sources" never do (`AMP_TASK_IGNORE`). Short tasks that fail are still reported.

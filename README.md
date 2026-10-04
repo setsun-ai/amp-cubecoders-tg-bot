@@ -25,8 +25,9 @@
 - **💀 Deaths** (Valheim, Minecraft) with a daily counter.
 - **Weekly summary** on Sunday evening: play time per game, top players, the busiest hour.
 - **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats or the [playit.gg](https://playit.gg) tunnel goes down.
-- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/updates`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
+- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/friends`, `/updates`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
 - **Server control** (`/servers`): start, stop, restart, game update and backup of AMP instances, the list of players online with kick and ban, the game console (with the server's answer) and the server password – all with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`.
+- **Friends** (`/friends`): a friend sends `/start` to the bot, you get the request with a button and tick the servers they may manage. They see only those, with start, stop, restart, game update, backup, players (kick/ban) and the console - no passwords, no player alerts, no history. Every action they take is reported to you. 🗑 removes the access.
 - **AMP panel on Telegram**: updates, backups and downloads started from the bot or the panel show up as one message with a live progress bar (▓▓▓▓░░░░░░ 40%), edited in place until ✅ done or ❌ failed; servers that start, stop or crash are reported too (`AMP_NOTIFY=0` turns it off).
 - **Updates** (`/updates`): every few hours the bot checks system packages (apt) and tells you when there are security updates or important ones (Tailscale, playit, Webmin, AMP's own package, kernel), when the machine needs a restart, and when a new AMP version is out - only when something new appears.
 - **Languages**: `/lang` with buttons, remembered per chat.

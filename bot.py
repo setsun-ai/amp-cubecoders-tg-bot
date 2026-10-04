@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -232,6 +232,40 @@ STRINGS = {
                  "👤 Someone wrote to the bot: {who} (ID <code>{id}</code>)",
                  "👤 Боту пишет: {who} (ID <code>{id}</code>)", "👤 Боту пише: {who} (ID <code>{id}</code>)"),
     "private": ("⛔ To prywatny bot.", "⛔ This is a private bot.", "⛔ Это приватный бот.", "⛔ Це приватний бот."),
+    "fr_requested": ("⛔ To prywatny bot – właściciel dostał twoją prośbę o dostęp.",
+                     "⛔ This is a private bot – the owner got your request for access.",
+                     "⛔ Это приватный бот – владелец получил твой запрос на доступ.",
+                     "⛔ Це приватний бот – власник отримав твій запит на доступ."),
+    "btn_grant": ("➕ Daj dostęp", "➕ Give access", "➕ Дать доступ", "➕ Надати доступ"),
+    "c_friends": ("Znajomi: dostęp do serwerów", "Friends: server access", "Друзья: доступ к серверам",
+                  "Друзі: доступ до серверів"),
+    "fr_title": ("👥 <b>Znajomi</b> – dotknij osoby, żeby zmienić jej serwery:",
+                 "👥 <b>Friends</b> – tap a person to change their servers:",
+                 "👥 <b>Друзья</b> – нажми на человека, чтобы изменить его серверы:",
+                 "👥 <b>Друзі</b> – натисни на людину, щоб змінити її сервери:"),
+    "fr_none": ("Nikt jeszcze nie ma dostępu. Znajomy pisze do bota /start, a ty dostajesz prośbę z przyciskiem.",
+                "Nobody has access yet. A friend sends /start to the bot and you get a request with a button.",
+                "Пока ни у кого нет доступа. Друг пишет боту /start, а ты получаешь запрос с кнопкой.",
+                "Поки ні в кого немає доступу. Друг пише боту /start, а ти отримуєш запит із кнопкою."),
+    "fr_pick": ("👤 <b>{who}</b> – zaznacz serwery, którymi może zarządzać (start, stop, restart, aktualizacja, "
+                "kopia, gracze, konsola; bez haseł). Powiadomień o graczach nie dostaje.",
+                "👤 <b>{who}</b> – tick the servers they may manage (start, stop, restart, update, backup, players, "
+                "console; no passwords). They get no player alerts.",
+                "👤 <b>{who}</b> – отметь серверы, которыми он может управлять (запуск, стоп, перезапуск, обновление, "
+                "бэкап, игроки, консоль; без паролей). Уведомлений об игроках он не получает.",
+                "👤 <b>{who}</b> – познач сервери, якими він може керувати (запуск, стоп, перезапуск, оновлення, "
+                "бекап, гравці, консоль; без паролів). Сповіщень про гравців не отримує."),
+    "btn_save": ("💾 Zapisz", "💾 Save", "💾 Сохранить", "💾 Зберегти"),
+    "btn_remove": ("🗑 Usuń dostęp", "🗑 Remove access", "🗑 Убрать доступ", "🗑 Прибрати доступ"),
+    "fr_saved": ("✅ {who}: {list}", "✅ {who}: {list}", "✅ {who}: {list}", "✅ {who}: {list}"),
+    "fr_removed": ("🗑 {who} nie ma już dostępu.", "🗑 {who} no longer has access.", "🗑 У {who} больше нет доступа.",
+                   "🗑 {who} більше не має доступу."),
+    "fr_granted": ("✅ Masz dostęp do serwerów: {list}. Otwórz /servers.",
+                   "✅ You have access to the servers: {list}. Open /servers.",
+                   "✅ У тебя есть доступ к серверам: {list}. Открой /servers.",
+                   "✅ У тебе є доступ до серверів: {list}. Відкрий /servers."),
+    "fr_revoked": ("ℹ️ Twój dostęp do serwerów został usunięty.", "ℹ️ Your access to the servers was removed.",
+                   "ℹ️ Твой доступ к серверам удалён.", "ℹ️ Твій доступ до серверів видалено."),
     "error": ("❌ Coś poszło nie tak, szczegóły w logu bota.", "❌ Something went wrong, see the bot log.",
               "❌ Что-то пошло не так, подробности в логе бота.", "❌ Щось пішло не так, подробиці в лозі бота."),
     "lang_choose": ("🌐 Wybierz język:", "🌐 Choose a language:", "🌐 Выбери язык:", "🌐 Обери мову:"),
@@ -806,6 +840,7 @@ def open_db(readonly=False):
         CREATE TABLE IF NOT EXISTS deaths(id INTEGER PRIMARY KEY, instance TEXT, game TEXT, username TEXT, ts INTEGER);
         CREATE TABLE IF NOT EXISTS warned(instance TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
+        CREATE TABLE IF NOT EXISTS friends(user_id INTEGER PRIMARY KEY, name TEXT, instances TEXT, added INTEGER);
     """)
     # sesje niezamkniete przy poprzednim wylaczeniu bota
     db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
@@ -820,6 +855,28 @@ def meta_get(db, key):
 
 def meta_set(db, key, value):
     db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?,?)", (key, str(value)))
+    db.commit()
+
+
+def friend_get(db, user_id):
+    """Znajomy z dostepem do wybranych instancji AMP: {"name", "instances"} albo None."""
+    row = db.execute("SELECT name, instances FROM friends WHERE user_id=?", (user_id,)).fetchone()
+    return {"name": row[0], "instances": json.loads(row[1] or "[]")} if row else None
+
+
+def friends_all(db):
+    return [(uid, name, json.loads(insts or "[]"))
+            for uid, name, insts in db.execute("SELECT user_id, name, instances FROM friends ORDER BY name")]
+
+
+def friend_set(db, user_id, name, instances):
+    db.execute("INSERT OR REPLACE INTO friends(user_id, name, instances, added) VALUES (?,?,?,?)",
+               (user_id, name, json.dumps(sorted(instances)), int(time.time())))
+    db.commit()
+
+
+def friend_remove(db, user_id):
+    db.execute("DELETE FROM friends WHERE user_id=?", (user_id,))
     db.commit()
 
 
@@ -1476,27 +1533,31 @@ def amp_test():
 # ---------- komendy na Telegramie ----------
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
-COMMANDS = [("online", ""), ("servers", ""), ("updates", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"),
-            ("week", ""), ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
+COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), ("status", ""), ("history", " [N]"),
+            ("player", " NICK"), ("week", ""), ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""),
+            ("help", "")]
+# znajomi: tylko przydzielone serwery
+FRIEND_COMMANDS = [("servers", ""), ("lang", ""), ("help", "")]
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
-           "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang"}
+           "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang",
+           "znajomi": "friends"}
 # komendy sa tylko pod przyciskiem "Menu"; to chowa klawiature z przyciskami z wersji 1.0.0-1.1.0
 NO_KEYBOARD = {"remove_keyboard": True}
 LANG_BUTTONS = {"inline_keyboard": [[{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("pl", "en")],
                                     [{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("ru", "uk")]]}
 
 
-def help_text(lang):
+def help_text(lang, commands=None):
     lines = [t("help_title", lang, v=VERSION)]
-    lines += [f"/{cmd}{esc(args)} – {t('c_' + cmd, lang)}" for cmd, args in COMMANDS]
+    lines += [f"/{cmd}{esc(args)} – {t('c_' + cmd, lang)}" for cmd, args in commands or COMMANDS]
     return "\n".join(lines)
 
 
-def set_menu(chat_id):
-    """Menu komend (przycisk 'Menu' w Telegramie) na czacie admina, w jego jezyku."""
+def set_menu(chat_id, commands=None):
+    """Menu komend (przycisk 'Menu' w Telegramie) na czacie admina albo znajomego, w jego jezyku."""
     lang = lang_for(chat_id)
-    commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in COMMANDS])
+    commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in commands or COMMANDS])
     try:
         tg_api("setMyCommands", {"commands": commands, "scope": json.dumps({"type": "chat", "chat_id": chat_id})})
     except Exception as e:
@@ -1550,6 +1611,7 @@ def selftest():
         raise SystemExit("parser Minecrafta nie dziala")
     for lang in LANG_ORDER:  # wszystkie teksty daja sie sformatowac w kazdym jezyku
         help_text(lang)
+        help_text(lang, FRIEND_COMMANDS)
         fmt_duration(3700, lang)
     print(f"OK {VERSION}")
 
@@ -1622,6 +1684,7 @@ class Commands:
         self.amp = Amp()
         self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
         self.cache = {}  # chat -> listy (gracze, ustawienia), do ktorych odwoluja sie przyciski po numerze
+        self.scope = None  # None = admin; zbior instancji = znajomy, ktorego wiadomosc wlasnie obslugujemy
 
     def poll(self, timeout):
         """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli)."""
@@ -1662,26 +1725,51 @@ class Commands:
             log("Restart po aktualizacji")
             sys.exit(0)  # systemd (Restart=always) uruchomi nowa wersje
 
+    @staticmethod
+    def who(user):
+        who = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x) or str(user.get("id"))
+        return who + (f" @{user['username']}" if user.get("username") else "")
+
     def reject(self, user, chat):
         key = f"stranger:{user.get('id')}"
-        if not meta_get(self.db, key):  # informujemy admina tylko raz o kazdej osobie
-            meta_set(self.db, key, int(time.time()))
-            who = " ".join(x for x in (user.get("first_name"), user.get("last_name")) if x)
-            if user.get("username"):
-                who += f" @{user['username']}"
-            send(t("stranger", who=esc(who), id=user.get("id")))
-        send(t("private", norm_lang(user.get("language_code")) or "en"), chat)
+        lang = norm_lang(user.get("language_code")) or "en"
+        if meta_get(self.db, key):
+            send(t("private", lang), chat)
+            return
+        # admin dostaje prosbe tylko raz o kazdej osobie, z przyciskiem do nadania dostepu
+        meta_set(self.db, key, int(time.time()))
+        meta_set(self.db, f"who:{user.get('id')}", json.dumps({"name": self.who(user), "lang": lang}))
+        send(t("stranger", who=esc(self.who(user)), id=user.get("id")),
+             markup={"inline_keyboard": [[self.btn("btn_grant", f"fr:{user.get('id')}", None)]]})
+        send(t("fr_requested", lang), chat)
+
+    def friend_scope(self, user):
+        """None dla admina, zbior instancji dla znajomego, False dla obcego."""
+        if user.get("id") in ADMINS:
+            return None
+        friend = friend_get(self.db, user.get("id"))
+        return set(friend["instances"]) if friend else False
 
     def handle(self, msg):
         chat = msg["chat"]["id"]
         user = msg.get("from", {})
-        if user.get("id") not in ADMINS:
+        self.scope = self.friend_scope(user)
+        if self.scope is False:
             self.reject(user, chat)
             return
         lang = lang_for(chat)
         parts = msg["text"].split()
         cmd, args = parts[0][1:].split("@")[0].lower(), parts[1:]
         cmd = ALIASES.get(cmd, cmd)
+        if self.scope is not None:  # znajomy: tylko swoje serwery i jezyk
+            if cmd in ("servers", "serwery", "server"):
+                text, markup = self.servers_view(lang)
+                send(text, chat, markup=markup)
+            elif cmd == "lang":
+                self.lang_command(chat, args, lang)
+            else:
+                send(help_text(lang, FRIEND_COMMANDS), chat, markup=NO_KEYBOARD)
+            return
         if cmd == "online":
             send(t("online_title", lang) + "\n" + cmd_online(self.instances, lang), chat)
         elif cmd == "history":
@@ -1698,11 +1786,11 @@ class Commands:
         elif cmd in ("servers", "serwery", "server"):
             text, markup = self.servers_view(lang)
             send(text, chat, markup=markup)
+        elif cmd == "friends":
+            text, markup = self.friends_view(lang)
+            send(text, chat, markup=markup)
         elif cmd == "lang":
-            if args and norm_lang(args[0]):
-                self.set_lang(chat, norm_lang(args[0]))
-            else:
-                send(t("lang_choose", lang), chat, markup=LANG_BUTTONS)
+            self.lang_command(chat, args, lang)
         elif cmd == "version":
             try:
                 latest = esc(latest_release())
@@ -1716,6 +1804,12 @@ class Commands:
         else:
             send(help_text(lang), chat, markup=NO_KEYBOARD)
 
+    def lang_command(self, chat, args, lang):
+        if args and norm_lang(args[0]):
+            self.set_lang(chat, norm_lang(args[0]))
+        else:
+            send(t("lang_choose", lang), chat, markup=LANG_BUTTONS)
+
     def handle_callback(self, cq):
         user = cq.get("from", {})
         chat = cq.get("message", {}).get("chat", {}).get("id")
@@ -1724,7 +1818,14 @@ class Commands:
             tg_api("answerCallbackQuery", {"callback_query_id": cq["id"]})
         except Exception:
             pass
-        if user.get("id") not in ADMINS or chat is None:
+        self.scope = self.friend_scope(user)
+        if self.scope is False or chat is None:
+            return
+        if self.scope is not None and not self.friend_may(data):
+            return
+        if data == "frl" or data.startswith(("fr:", "frt:", "frs:", "frd:")):
+            text, markup = self.friends_callback(data, lang_for(chat))
+            edit(chat, cq["message"]["message_id"], text, markup)
             return
         if data.startswith("lang:") and norm_lang(data[5:]):
             lang = norm_lang(data[5:])
@@ -1740,6 +1841,94 @@ class Commands:
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
 
+    def friend_may(self, data):
+        """Przyciski znajomego: jezyk, lista serwerow i jego instancje - bez hasel i bez /friends."""
+        if data.startswith("lang:") or data == "srv":
+            return True
+        kind, _, rest = data.partition(":")
+        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!"):
+            return False
+        return rest.rsplit(":", 1)[-1] in self.scope
+
+    # ---------- /friends ----------
+
+    def friends_view(self, lang):
+        rows = [[{"text": f"👤 {name} – {', '.join(insts) or '—'}"[:60], "callback_data": f"fr:{uid}"}]
+                for uid, name, insts in friends_all(self.db)]
+        known = {r[0]["callback_data"] for r in rows}
+        for key, value in self.db.execute("SELECT key, value FROM meta WHERE key LIKE 'who:%' ORDER BY key"):
+            if f"fr:{key[4:]}" not in known:  # prosili o dostep, jeszcze go nie maja
+                rows.append([{"text": f"❓ {json.loads(value)['name']}"[:60], "callback_data": f"fr:{key[4:]}"}])
+        return (t("fr_title", lang) if rows else t("fr_none", lang)), ({"inline_keyboard": rows} if rows else None)
+
+    def friend_name(self, uid):
+        friend = friend_get(self.db, uid)
+        if friend:
+            return friend["name"]
+        who = meta_get(self.db, f"who:{uid}")
+        return json.loads(who)["name"] if who else str(uid)
+
+    def friend_picker(self, uid, lang):
+        pick = self.cache[("fr", uid)]
+        rows = [[{"text": ("☑️ " if i["name"] in pick["sel"] else "⬜ ") + i["friendly"],
+                  "callback_data": f"frt:{uid}:{n}"}] for n, i in enumerate(pick["insts"])]
+        last = [self.btn("btn_save", f"frs:{uid}", lang)]
+        if friend_get(self.db, uid):
+            last.append(self.btn("btn_remove", f"frd:{uid}", lang))
+        rows += [last, [self.btn("btn_back", "frl", lang)]]
+        return t("fr_pick", lang, who=esc(self.friend_name(uid))), {"inline_keyboard": rows}
+
+    def friends_callback(self, data, lang):
+        if data == "frl":
+            return self.friends_view(lang)
+        kind, _, rest = data.partition(":")
+        uid = int(rest.split(":")[0]) if rest.split(":")[0].isdigit() else 0
+        if not uid:
+            return self.friends_view(lang)
+        if kind == "fr" or ("fr", uid) not in self.cache:
+            if not self.amp.configured:
+                return t("amp_off", lang), None
+            try:
+                insts = self.amp.instances()
+            except Exception as e:
+                return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "frl", lang)]]}
+            current = (friend_get(self.db, uid) or {}).get("instances", [])
+            self.cache[("fr", uid)] = {"insts": insts, "sel": set(current)}
+            if kind == "fr":
+                return self.friend_picker(uid, lang)
+        pick = self.cache[("fr", uid)]
+        if kind == "frt":
+            n = rest.split(":")[1]
+            if n.isdigit() and int(n) < len(pick["insts"]):
+                pick["sel"] ^= {pick["insts"][int(n)]["name"]}
+            return self.friend_picker(uid, lang)
+        name = self.friend_name(uid)
+        if kind == "frs" and pick["sel"]:
+            friend_set(self.db, uid, name, pick["sel"])
+            labels = ", ".join(i["friendly"] for i in pick["insts"] if i["name"] in pick["sel"])
+            if not meta_get(self.db, f"lang:{uid}"):  # znajomy dostaje wiadomosci w swoim jezyku z Telegrama
+                who = json.loads(meta_get(self.db, f"who:{uid}") or "{}")
+                meta_set(self.db, f"lang:{uid}", who.get("lang", "en"))
+                CHAT_LANGS[str(uid)] = norm_lang(who.get("lang")) or "en"
+            send(t("fr_granted", lang_for(uid), list=esc(labels)), uid)
+            set_menu(uid, FRIEND_COMMANDS)
+            self.cache.pop(("fr", uid), None)
+            text, markup = self.friends_view(lang)
+            return t("fr_saved", lang, who=esc(name), list=esc(labels)) + "\n\n" + text, markup
+        if kind in ("frs", "frd"):  # zapis bez zadnego serwera = usuniecie dostepu
+            had = friend_get(self.db, uid)
+            friend_remove(self.db, uid)
+            self.cache.pop(("fr", uid), None)
+            if had:
+                send(t("fr_revoked", lang_for(uid)), uid)
+                try:
+                    tg_api("deleteMyCommands", {"scope": json.dumps({"type": "chat", "chat_id": uid})})
+                except Exception:
+                    pass
+            text, markup = self.friends_view(lang)
+            return t("fr_removed", lang, who=esc(name)) + "\n\n" + text, markup
+        return self.friends_view(lang)
+
     # ---------- /servers ----------
 
     def players_on(self, name):
@@ -1753,6 +1942,8 @@ class Commands:
             insts = self.amp.instances()
         except Exception as e:
             return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]}
+        if self.scope is not None:  # znajomy widzi tylko przydzielone instancje
+            insts = [i for i in insts if i["name"] in self.scope]
         if not insts:
             return t("srv_none", lang), None
         rows = []
@@ -1770,7 +1961,10 @@ class Commands:
 
     def handle_text(self, msg):
         chat, user = msg["chat"]["id"], msg.get("from", {})
-        if user.get("id") not in ADMINS:
+        self.scope = self.friend_scope(user)
+        wait = self.awaiting.get(str(chat), {})
+        if self.scope is False or (self.scope is not None and (wait.get("kind") != "console"
+                                                               or wait.get("name") not in self.scope)):
             return
         lang = lang_for(chat)
         wait = self.awaiting.pop(str(chat))
@@ -1793,7 +1987,7 @@ class Commands:
                                               self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
 
     def audit(self, user, chat, action, name):
-        who = user.get("first_name") or str(user.get("id"))
+        who = self.who(user)
         log(f"AMP: {who} -> {action} {name}")
         if str(chat) != str(CHAT_ID):  # admin dostaje slad kazdej akcji wykonanej z innego czatu
             send(t("srv_audit", who=esc(who), action=esc(action), name=esc(name)))
@@ -1904,8 +2098,8 @@ class Commands:
         if inst["running"]:
             rows += [[self.btn("act_update", f"do:update:{name}", lang),
                       self.btn("act_backup", f"do:backup:{name}", lang)],
-                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang),
-                      self.btn("btn_password", f"pw:{name}", lang)]]
+                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang)]
+                     + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
         return "\n".join(lines), {"inline_keyboard": rows}
 
@@ -2015,6 +2209,8 @@ def run():
                      markup=NO_KEYBOARD)
                 for admin in ADMINS:
                     set_menu(admin)
+                for uid, _name, _insts in friends_all(db):
+                    set_menu(uid, FRIEND_COMMANDS)
             startup = False
             last_scan = now
         for inst in instances.values():
