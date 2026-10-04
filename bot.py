@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -348,6 +348,38 @@ STRINGS = {
     "btn_console": ("⌨️ Konsola", "⌨️ Console", "⌨️ Консоль", "⌨️ Консоль"),
     "btn_password": ("🔑 Hasło", "🔑 Password", "🔑 Пароль", "🔑 Пароль"),
     "btn_cancel": ("✖️ Anuluj", "✖️ Cancel", "✖️ Отмена", "✖️ Скасувати"),
+    "btn_settings": ("⚙️ Ustawienia", "⚙️ Settings", "⚙️ Настройки", "⚙️ Налаштування"),
+    "btn_search": ("🔎 Szukaj", "🔎 Search", "🔎 Поиск", "🔎 Пошук"),
+    "btn_change": ("✏️ Zmień", "✏️ Change", "✏️ Изменить", "✏️ Змінити"),
+    "set_on": ("✅ Włącz", "✅ Turn on", "✅ Включить", "✅ Увімкнути"),
+    "set_off": ("⬜ Wyłącz", "⬜ Turn off", "⬜ Выключить", "⬜ Вимкнути"),
+    "set_title": ("⚙️ <b>{name}</b> – ustawienia (jak w panelu AMP). Wybierz grupę albo wyszukaj:",
+                 "⚙️ <b>{name}</b> – settings (as in the AMP panel). Pick a group or search:",
+                 "⚙️ <b>{name}</b> – настройки (как в панели AMP). Выбери группу или найди:",
+                 "⚙️ <b>{name}</b> – налаштування (як у панелі AMP). Обери групу або знайди:"),
+    "set_none": ("Ta instancja nie podaje ustawień (czy działa w AMP?).",
+                "This instance doesn't report its settings (is it running in AMP?).",
+                "Этот инстанс не отдаёт настройки (он запущен в AMP?).",
+                "Цей інстанс не віддає налаштування (він запущений в AMP?)."),
+    "set_search_prompt": ("🔎 Napisz fragment nazwy ustawienia, np. difficulty, motd, seed, version:",
+                         "🔎 Type part of a setting's name, e.g. difficulty, motd, seed, version:",
+                         "🔎 Напиши часть названия настройки, например difficulty, motd, seed, version:",
+                         "🔎 Напиши частину назви налаштування, наприклад difficulty, motd, seed, version:"),
+    "set_found": ("🔎 „{q}”: znaleziono {n}", "🔎 \"{q}\": {n} found", "🔎 «{q}»: найдено {n}",
+                  "🔎 «{q}»: знайдено {n}"),
+    "set_now": ("Teraz: {value}", "Now: {value}", "Сейчас: {value}", "Зараз: {value}"),
+    "set_prompt": ("✏️ Napisz nową wartość dla „{setting}” (teraz: {value}). Kropka = puste.",
+                  "✏️ Type the new value for \"{setting}\" (now: {value}). A dot = empty.",
+                  "✏️ Напиши новое значение для «{setting}» (сейчас: {value}). Точка = пусто.",
+                  "✏️ Напиши нове значення для «{setting}» (зараз: {value}). Крапка = порожньо."),
+    "set_done": ("✅ {setting}: {old} → {new}\nZmiany zwykle działają po restarcie serwera.",
+                "✅ {setting}: {old} → {new}\nChanges usually take effect after a server restart.",
+                "✅ {setting}: {old} → {new}\nИзменения обычно вступают в силу после перезапуска сервера.",
+                "✅ {setting}: {old} → {new}\nЗміни зазвичай діють після перезапуску сервера."),
+    "set_update_hint": ("⬆️ To zmienia wersję gry – kliknij potem „Aktualizacja gry”, żeby ją pobrać.",
+                       "⬆️ This changes the game version – then tap \"Game update\" to download it.",
+                       "⬆️ Это меняет версию игры – потом нажми «Обновление игры», чтобы её скачать.",
+                       "⬆️ Це змінює версію гри – потім натисни «Оновлення гри», щоб її завантажити."),
     "srv_need_running": ("Najpierw uruchom instancję.", "Start the instance first.", "Сначала запусти инстанс.",
                          "Спочатку запусти інстанс."),
     "pl_title": ("👥 <b>{name}</b> – gracze online:", "👥 <b>{name}</b> – players online:",
@@ -1232,6 +1264,38 @@ class Amp:
                     found.append((label or node, node))
         return found
 
+    def settings(self, name):
+        """
+        Ustawienia instancji jak w panelu AMP: [(grupa, [{"name", "node", "desc", "type", "enum", "value"}])].
+        Bez hasel (osobny przycisk), ukrytych, tylko do odczytu i ustawien samego AMP (Core.*: porty, loginy).
+        """
+        inst = self.find(name)
+        spec = self.instance_call(inst["id"], "Core/GetSettingsSpec") or {}
+        groups = []
+        for group, items in (spec.items() if isinstance(spec, dict) else []):
+            out = []
+            for item in items or []:
+                if not isinstance(item, dict):
+                    continue
+                node, label = str(item.get("Node", "")), str(item.get("Name") or item.get("Node", ""))
+                kind = str(item.get("InputType") or "text").lower()
+                text = f"{node} {label}".lower()
+                if (not node or item.get("Hidden") or item.get("ReadOnly") or kind == "password"
+                        or "password" in text or node.startswith("Core.")):
+                    continue
+                enum = item.get("EnumValues")
+                out.append({"name": label, "node": node, "desc": str(item.get("Description") or ""), "type": kind,
+                            "enum": [(str(k), str(v)) for k, v in enum.items()] if isinstance(enum, dict) else [],
+                            "value": item.get("CurrentValue")})
+            if out:
+                groups.append((str(group).replace(":", " › "), out))
+        return groups
+
+    def get_config(self, name, node):
+        inst = self.find(name)
+        r = self.instance_call(inst["id"], "Core/GetConfig", node=node)
+        return r.get("CurrentValue") if isinstance(r, dict) else r
+
     def set_config(self, name, node, value):
         inst = self.find(name)
         return self.instance_call(inst["id"], "Core/SetConfig", node=node, value=value)
@@ -1538,6 +1602,10 @@ COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), (
             ("help", "")]
 # znajomi: tylko przydzielone serwery
 FRIEND_COMMANDS = [("servers", ""), ("lang", ""), ("help", "")]
+# przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
+# stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
+SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
+SETTINGS_PAGE = 10
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
            "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang",
@@ -1685,6 +1753,7 @@ class Commands:
         self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
         self.cache = {}  # chat -> listy (gracze, ustawienia), do ktorych odwoluja sie przyciski po numerze
         self.scope = None  # None = admin; zbior instancji = znajomy, ktorego wiadomosc wlasnie obslugujemy
+        self.chat_key = ""  # czat, ktorego edytor ustawien wlasnie obslugujemy (klucz w self.cache)
 
     def poll(self, timeout):
         """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli)."""
@@ -1836,7 +1905,7 @@ class Commands:
                 pass
             self.set_lang(chat, lang, announce=False)
         elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
-                                               "pws:", "pw!:")):
+                                               "pws:", "pw!:") + SETTINGS_KINDS):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
@@ -1846,7 +1915,7 @@ class Commands:
         if data.startswith("lang:") or data == "srv":
             return True
         kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!"):
+        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!") + tuple(k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
 
@@ -1963,8 +2032,9 @@ class Commands:
         chat, user = msg["chat"]["id"], msg.get("from", {})
         self.scope = self.friend_scope(user)
         wait = self.awaiting.get(str(chat), {})
-        if self.scope is False or (self.scope is not None and (wait.get("kind") != "console"
-                                                               or wait.get("name") not in self.scope)):
+        if self.scope is False or (self.scope is not None and (
+                wait.get("kind") not in ("console", "setting", "setting_search")
+                or wait.get("name") not in self.scope)):
             return
         lang = lang_for(chat)
         wait = self.awaiting.pop(str(chat))
@@ -1974,6 +2044,13 @@ class Commands:
             send(t("con_confirm", lang, name=esc(wait["name"]), cmd=esc(text)), chat,
                  markup={"inline_keyboard": [[self.btn("btn_yes", f"con!:{wait['name']}", lang),
                                               self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
+        elif wait["kind"] == "setting":
+            text, markup = self.apply_setting(user, chat, wait["name"], wait["ci"], wait["si"],
+                                              "" if text == "." else text, lang)
+            send(text, chat, markup=markup)
+        elif wait["kind"] == "setting_search":
+            text, markup = self.search_settings(chat, wait["name"], text, lang)
+            send(text, chat, markup=markup)
         elif wait["kind"] == "password":
             try:  # haslo nie zostaje w historii czatu
                 tg_api("deleteMessage", {"chat_id": chat, "message_id": msg["message_id"]})
@@ -2074,6 +2151,148 @@ class Commands:
             return self.server_view(rest, lang, note=t("pw_done", lang))
         return self.servers_view(lang)
 
+    # ---------- ustawienia instancji ----------
+
+    @staticmethod
+    def setting_value(s, lang):
+        value = s["value"]
+        if s["type"] == "checkbox" or isinstance(value, bool):
+            return "✅" if str(value).lower() == "true" else "⬜"
+        label = dict(s["enum"]).get(str(value))
+        text = label or ("—" if value in (None, "") else str(value))
+        return text if len(text) <= 40 else text[:39] + "…"
+
+    def settings_home(self, name, lang):
+        groups = self.cache[(self.chat_key, "set", name)]
+        rows = [[{"text": f"{group} ({len(items)})"[:60], "callback_data": f"stc:{i}:0:{name}"[:64]}]
+                for i, (group, items) in enumerate(groups)]
+        rows += [[self.btn("btn_search", f"sts:{name}", lang), self.btn("btn_back", f"srv:{name}", lang)]]
+        return t("set_title", lang, name=esc(name)), {"inline_keyboard": rows}
+
+    def group_view(self, name, gi, page, lang, title=None):
+        group, items = self.cache[(self.chat_key, "set", name)][gi]
+        pages = max(1, (len(items) - 1) // SETTINGS_PAGE + 1)
+        page = min(max(page, 0), pages - 1)
+        first = page * SETTINGS_PAGE
+        rows = [[{"text": f"{s['name']}: {self.setting_value(s, lang)}"[:60],
+                  "callback_data": f"sti:{gi}:{si}:{name}"[:64]}]
+                for si, s in enumerate(items[first:first + SETTINGS_PAGE], first)]
+        if pages > 1:
+            nav = [{"text": "◀", "callback_data": f"stc:{gi}:{page - 1}:{name}"[:64]}] if page else []
+            nav.append({"text": f"{page + 1}/{pages}", "callback_data": f"stc:{gi}:{page}:{name}"[:64]})
+            if page < pages - 1:
+                nav.append({"text": "▶", "callback_data": f"stc:{gi}:{page + 1}:{name}"[:64]})
+            rows.append(nav)
+        rows.append([self.btn("btn_back", f"st:{name}", lang)])
+        return title or f"⚙️ <b>{esc(name)}</b> › {esc(group)}", {"inline_keyboard": rows}
+
+    def setting_view(self, name, gi, si, lang, note="", page=0):
+        s = self.cache[(self.chat_key, "set", name)][gi][1][si]
+        if s["value"] is None:
+            try:
+                s["value"] = self.amp.get_config(name, s["node"])
+            except Exception:
+                pass
+        lines = [f"⚙️ <b>{esc(s['name'])}</b>"]
+        if s["desc"]:
+            lines.append(f"<i>{esc(s['desc'][:300])}</i>")
+        lines.append(t("set_now", lang, value=esc(self.setting_value(s, lang))))
+        if note:
+            lines += ["", note]
+        rows = []
+        if s["type"] == "checkbox":
+            rows.append([self.btn("set_on", f"stv:{gi}:{si}:1:{name}", lang),
+                         self.btn("set_off", f"stv:{gi}:{si}:0:{name}", lang)])
+        elif s["enum"]:
+            per = 12
+            first = page * per
+            for n, (key, label) in enumerate(s["enum"][first:first + per], first):
+                mark = "• " if key == str(s["value"]) else ""
+                rows.append([{"text": (mark + label)[:60], "callback_data": f"stv:{gi}:{si}:{n}:{name}"[:64]}])
+            pages = (len(s["enum"]) - 1) // per + 1
+            if pages > 1:
+                nav = [{"text": "◀", "callback_data": f"ste:{gi}:{si}:{page - 1}:{name}"[:64]}] if page else []
+                nav.append({"text": f"{page + 1}/{pages}", "callback_data": f"ste:{gi}:{si}:{page}:{name}"[:64]})
+                if page < pages - 1:
+                    nav.append({"text": "▶", "callback_data": f"ste:{gi}:{si}:{page + 1}:{name}"[:64]})
+                rows.append(nav)
+        else:
+            rows.append([self.btn("btn_change", f"stw:{gi}:{si}:{name}", lang)])
+        rows.append([self.btn("btn_back", f"stc:{gi}:{si // SETTINGS_PAGE}:{name}", lang)])
+        return "\n".join(lines), {"inline_keyboard": rows}
+
+    def apply_setting(self, user, chat, name, gi, si, value, lang):
+        self.chat_key = str(chat)
+        s = self.cache[(self.chat_key, "set", name)][gi][1][si]
+        old = self.setting_value(s, lang)
+        try:
+            self.amp.set_config(name, s["node"], value)
+        except Exception as e:
+            return self.setting_view(name, gi, si, lang, note=t("amp_error", lang, err=esc(e)))
+        s["value"] = value
+        new = self.setting_value(s, lang)
+        self.audit(user, chat, f"⚙️ {s['name']}: {old} → {new}", name)
+        note = t("set_done", lang, setting=esc(s["name"]), old=esc(old), new=esc(new))
+        if re.search(r"version|wersj|server ?type|release|branch|loader|forge|fabric",
+                     f"{s['node']} {s['name']}", re.I):
+            note += "\n" + t("set_update_hint", lang)
+        return self.setting_view(name, gi, si, lang, note=note)
+
+    def search_settings(self, chat, name, query, lang):
+        self.chat_key = str(chat)
+        key = (self.chat_key, "set", name)
+        if key not in self.cache:
+            self.cache[key] = self.amp.settings(name)
+        groups = [g for g in self.cache[key] if not g[0].startswith("🔎")]
+        q = query.lower()
+        found = [s for _, items in groups for s in items if q in f"{s['name']} {s['node']} {s['desc']}".lower()]
+        self.cache[key] = groups + [(f"🔎 {query}", found)]
+        if not found:
+            return t("set_found", lang, q=esc(query), n=0), {"inline_keyboard": [
+                [self.btn("btn_search", f"sts:{name}", lang), self.btn("btn_back", f"st:{name}", lang)]]}
+        return self.group_view(name, len(groups), 0, lang, title=t("set_found", lang, q=esc(query), n=len(found)))
+
+    def settings_callback(self, data, user, chat, lang):
+        self.chat_key = str(chat)
+        kind, _, rest = data.partition(":")
+        parts = rest.split(":")
+        name, nums = parts[-1], [int(x) for x in parts[:-1] if x.isdigit()]
+        key = (self.chat_key, "set", name)
+        if kind == "st" or key not in self.cache:
+            try:
+                self.cache[key] = self.amp.settings(name)
+            except Exception as e:
+                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+            if not self.cache[key]:
+                return self.server_view(name, lang, note=t("set_none", lang))
+            if kind == "st":
+                return self.settings_home(name, lang)
+        groups = self.cache[key]
+        if kind == "sts":
+            self.awaiting[self.chat_key] = {"kind": "setting_search", "name": name}
+            return t("set_search_prompt", lang), {"inline_keyboard": [[self.btn("btn_cancel", f"st:{name}", lang)]]}
+        if not nums or nums[0] >= len(groups):
+            return self.settings_home(name, lang)
+        gi = nums[0]
+        if kind == "stc":
+            return self.group_view(name, gi, nums[1] if len(nums) > 1 else 0, lang)
+        if len(nums) < 2 or nums[1] >= len(groups[gi][1]):
+            return self.group_view(name, gi, 0, lang)
+        si = nums[1]
+        s = groups[gi][1][si]
+        if kind == "ste":
+            return self.setting_view(name, gi, si, lang, page=nums[2] if len(nums) > 2 else 0)
+        if kind == "stw":
+            self.awaiting[self.chat_key] = {"kind": "setting", "name": name, "ci": gi, "si": si}
+            return (t("set_prompt", lang, setting=esc(s["name"]), value=esc(self.setting_value(s, lang))),
+                    {"inline_keyboard": [[self.btn("btn_cancel", f"sti:{gi}:{si}:{name}", lang)]]})
+        if kind == "stv" and len(nums) > 2:
+            if s["type"] == "checkbox":
+                return self.apply_setting(user, chat, name, gi, si, "true" if nums[2] else "false", lang)
+            if nums[2] < len(s["enum"]):
+                return self.apply_setting(user, chat, name, gi, si, s["enum"][nums[2]][0], lang)
+        return self.setting_view(name, gi, si, lang)
+
     @staticmethod
     def console_note(lines, lang):
         if not lines:
@@ -2098,7 +2317,8 @@ class Commands:
         if inst["running"]:
             rows += [[self.btn("act_update", f"do:update:{name}", lang),
                       self.btn("act_backup", f"do:backup:{name}", lang)],
-                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang)]
+                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang)],
+                     [self.btn("btn_settings", f"st:{name}", lang)]
                      + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
         return "\n".join(lines), {"inline_keyboard": rows}
@@ -2113,6 +2333,8 @@ class Commands:
             return self.server_view(rest, lang)
         if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!"):
             return self.tools_callback(data, user, chat, lang)
+        if kind + ":" in SETTINGS_KINDS:
+            return self.settings_callback(data, user, chat, lang)
         act, _, name = rest.partition(":")
         if act not in Amp.ACTIONS:
             return self.servers_view(lang)

@@ -604,3 +604,79 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
     n = len(edits)
     click("srv:Valheim01", friend)
     assert len(edits) == n  # po usunieciu - znowu obcy
+
+
+class SettingsAmp(FakeAmp):
+    def __init__(self):
+        super().__init__()
+        self.expire_once = False
+
+    def _post(self, path, payload, timeout=30):
+        if path.endswith("Core/GetSettingsSpec"):
+            self.calls.append((path, payload))
+            return {"result": {
+                "Minecraft:Server": [
+                    {"Name": "Difficulty", "Node": "MinecraftModule.Game.Difficulty", "InputType": "enum",
+                     "EnumValues": {"0": "Peaceful", "1": "Easy", "2": "Normal", "3": "Hard"}, "CurrentValue": "2"},
+                    {"Name": "PvP", "Node": "MinecraftModule.Game.PVP", "InputType": "checkbox", "CurrentValue": True},
+                    {"Name": "Message of the day", "Node": "MinecraftModule.Server.MOTD", "InputType": "text",
+                     "CurrentValue": "Hello"},
+                    {"Name": "Server password", "Node": "MinecraftModule.Server.Password", "InputType": "password"}],
+                "AMP:Instance": [{"Name": "Web port", "Node": "Core.Webserver.Port", "InputType": "number"}],
+                "Minecraft:Version": [
+                    {"Name": "Server type", "Node": "MinecraftModule.Minecraft.ServerType", "InputType": "enum",
+                     "EnumValues": {"Vanilla": "Vanilla", "Forge": "Forge"}, "CurrentValue": "Forge"}]}}
+        return super()._post(path, payload, timeout)
+
+
+def test_settings_editor(env, monkeypatch):
+    edits, sent_to = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    c = bot.Commands(env.db, env.inst)
+    c.amp = SettingsAmp()
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    admin = {"id": 1, "first_name": "Admin"}
+    friend = {"id": 42, "first_name": "Kumpel"}
+
+    def click(data, user=admin):
+        c.handle_callback({"id": "q", "from": user, "data": data, "message": {"chat": {"id": user["id"]},
+                                                                              "message_id": 7}})
+        return edits[-1]
+
+    def sets():
+        return [(pl["node"], pl["value"]) for p, pl in c.amp.calls if p.endswith("Core/SetConfig")]
+
+    text, markup = click("srv:Valheim01")
+    assert "st:Valheim01" in str(markup)
+    text, markup = click("st:Valheim01")
+    labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert "Minecraft › Server (3)" in labels and not any("AMP" in x for x in labels)  # bez hasel i Core.*
+    text, markup = click("stc:0:0:Valheim01")
+    assert "Difficulty: Normal" in str(markup) and "PvP: ✅" in str(markup)
+
+    text, markup = click("sti:0:0:Valheim01")
+    assert "• Normal" in str(markup)
+    text, _ = click("stv:0:0:3:Valheim01")
+    assert sets()[-1] == ("MinecraftModule.Game.Difficulty", "3") and "Normal → Hard" in text
+
+    click("sti:0:1:Valheim01")
+    click("stv:0:1:0:Valheim01")
+    assert sets()[-1] == ("MinecraftModule.Game.PVP", "false")
+
+    click("stw:0:2:Valheim01")
+    c.handle_text({"chat": {"id": 1}, "from": admin, "text": "Witajcie!", "message_id": 9})
+    assert sets()[-1] == ("MinecraftModule.Server.MOTD", "Witajcie!") and "Hello → Witajcie!" in sent_to[-1][1]
+
+    text, _ = click("stv:1:0:0:Valheim01")  # Forge -> Vanilla
+    assert sets()[-1] == ("MinecraftModule.Minecraft.ServerType", "Vanilla") and "⬆️" in text
+
+    click("sts:Valheim01", friend)  # znajomy na swoim serwerze: tak
+    c.handle_text({"chat": {"id": 42}, "from": friend, "text": "motd", "message_id": 10})
+    assert "Message of the day" in str(sent_to[-1][2])
+    assert len(sets()) == 4  # wyszukiwanie niczego nie zmienia
+    n = len(edits)
+    click("st:Mc01", friend)  # cudzy serwer: nie
+    assert len(edits) == n

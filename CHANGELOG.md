@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.0 (2026-10)
+
+- **⚙️ Settings** of an instance from Telegram (`/servers` → a server): every setting AMP shows in its panel, in its groups, with search; lists as buttons (difficulty, game type such as Forge or Vanilla, version...), on/off switches, typed values (world name, message of the day...). After a version or type change the bot reminds you to run the game update. Passwords stay under 🔑 and AMP's own settings (ports, logins) are left out. Friends can use it on their servers; every change is reported to the admin as "old → new".
+
 ## 1.6.0 (2026-10)
 
 - **Friends** (`/friends`): someone who writes to the bot becomes a request with a ➕ button; you tick the servers they may manage. A friend gets their own menu (`/servers`, `/lang`, `/help`) and only those servers - start, stop, restart, game update, backup, players with kick/ban, console; no passwords, no player alerts, no history or system commands. Their every action is reported to you with their name; 🗑 removes the access.
