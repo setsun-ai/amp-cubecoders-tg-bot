@@ -399,6 +399,9 @@ def test_task_progress_is_one_message_edited_in_place(watcher, env, monkeypatch)
     monkeypatch.setattr(bot.time, "time", lambda: clock[0])
     w.amp.inst_tasks = [{"Id": "t1", "Name": "Updating Valheim", "Description": "Downloading", "ProgressPercent": 20}]
     w.check_tasks()
+    assert env.sent == []  # dopiero gdy trwa dluzej niz AMP_TASK_MIN_SECONDS
+    clock[0] += 20
+    w.check_tasks()
     assert env.sent == ["⏳ <b>Valheim</b>: Updating Valheim\nDownloading\n▓▓░░░░░░░░ 20%"]
     w.amp.inst_tasks[0]["ProgressPercent"] = 60
     clock[0] += 3
@@ -413,14 +416,63 @@ def test_task_progress_is_one_message_edited_in_place(watcher, env, monkeypatch)
     assert len(env.sent) == 1
 
 
-def test_failed_panel_task_and_indeterminate(watcher, env):
+def test_failed_panel_task_and_indeterminate(watcher, env, monkeypatch):
     w, edits = watcher
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
     w.amp.ads_tasks = [{"Id": "b", "Name": "Backup", "IsIndeterminate": True, "ProgressPercent": 0, "State": "Failed"}]
+    w.check_tasks()
+    clock[0] += 20
     w.check_tasks()
     assert env.sent[-1] == "⏳ <b>panel AMP</b>: Backup"
     w.amp.ads_tasks = []
     w.check_tasks()
     assert edits[-1] == (100, "❌ <b>panel AMP</b>: Backup – nie powiodło się")
+
+
+def test_short_and_routine_tasks_are_silent(watcher, env, monkeypatch):
+    w, edits = watcher
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    w.amp.ads_tasks = [{"Id": "r", "Name": "Updating remote sources"}, {"Id": "q", "Name": "Quick job"}]
+    w.check_tasks()
+    clock[0] += 60
+    w.amp.ads_tasks = [{"Id": "r", "Name": "Updating remote sources"}]
+    w.check_tasks()  # "Quick job" skonczyl sie po chwili, "remote sources" jest ignorowane
+    clock[0] += 60
+    w.amp.ads_tasks = []
+    w.check_tasks()
+    assert env.sent == [] and edits == []
+
+
+APT = """Listing... Done
+openssl/jammy-updates,jammy-security 3.0.2-0ubuntu1.15 amd64 [upgradable from: 3.0.2-0ubuntu1.14]
+tailscale/unknown 1.82.0 amd64 [upgradable from: 1.80.2]
+vim/jammy-updates 2:8.2.3995-1ubuntu2.18 amd64 [upgradable from: 2:8.2.3995-1ubuntu2.17]
+"""
+
+
+def test_updates_report_and_monitor(env, monkeypatch):
+    pkgs = bot.parse_apt(APT)
+    assert [(p["name"], p["security"]) for p in pkgs] == [("openssl", True), ("tailscale", False), ("vim", False)]
+    amp = FakeAmp()
+    text = bot.updates_report(amp, "pl", pkgs=pkgs, reboot=["linux-image-6.8"], amp_info=(True, "2.6.1"))
+    assert "Pakiety do aktualizacji: 3 (bezpieczeństwa: 1)" in text and "openssl" in text and "🛡" in text
+    assert "tailscale" in text and "…i 1 zwykłych" in text and "linux-image-6.8" in text and "2.6.1" in text
+
+    monkeypatch.setattr(bot, "apt_upgradable", lambda: pkgs)
+    monkeypatch.setattr(bot, "reboot_required", lambda: None)
+    monkeypatch.setattr(bot, "amp_update_info", lambda a: (False, None))
+    m = bot.UpdateMonitor(amp, env.db)
+    m.poll()
+    assert len(env.sent) == 1 and "openssl" in env.sent[0]
+    m.last = 0
+    m.poll()
+    assert len(env.sent) == 1  # nic nowego - bez powtorki
+    monkeypatch.setattr(bot, "apt_upgradable", lambda: bot.parse_apt(APT.replace("ubuntu1.15", "ubuntu1.16")))
+    m.last = 0
+    m.poll()
+    assert len(env.sent) == 2
 
 
 def test_state_changes_from_the_panel(watcher, env):

@@ -25,9 +25,10 @@
 - **💀 Śmierci** (Valheim, Minecraft) z licznikiem na dziś.
 - **Podsumowanie tygodnia** w niedzielę wieczorem: czas gry na każdym serwerze, ranking, godzina największego ruchu.
 - **Maszyna**: alert, gdy bateria laptopa spadnie poniżej progu, gdy CPU się przegrzewa albo gdy padnie tunel [playit.gg](https://playit.gg).
-- **Komendy** (tylko dla admina, pod przyciskiem *Menu* w Telegramie): `/online`, `/servers`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`. Stare polskie nazwy (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) też działają.
+- **Komendy** (tylko dla admina, pod przyciskiem *Menu* w Telegramie): `/online`, `/servers`, `/updates`, `/status`, `/history [N]`, `/player NICK`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`. Stare polskie nazwy (`/historia`, `/gracz`, `/tydzien`, `/wersja`, `/pomoc`) też działają.
 - **Sterowanie serwerami** (`/servers`): start, stop, restart, aktualizacja gry i backup instancji AMP, lista graczy online z kick i ban, konsola gry (z odpowiedzią serwera) i hasło serwera – wszystko przyciskami, z potwierdzeniem i ostrzeżeniem, gdy ktoś gra. Wymaga osobnego konta AMP dla bota (`AMP_URL`, `AMP_USER`, `AMP_PASS`); sprawdzisz je komendą `python3 /opt/amp-tg-bot/bot.py --amp-test`.
 - **Panel AMP na Telegramie**: aktualizacje, backupy i pobieranie uruchomione z bota albo z panelu pojawiają się jako jedna wiadomość z paskiem postępu (▓▓▓▓░░░░░░ 40%), edytowana na bieżąco aż do ✅ gotowe albo ❌ błąd; start, stop i awaria serwera też trafiają na czat (`AMP_NOTIFY=0` wyłącza).
+- **Aktualizacje** (`/updates`): co kilka godzin bot sprawdza pakiety systemu (apt) i pisze, gdy są łatki bezpieczeństwa albo ważne aktualizacje (Tailscale, playit, Webmin, pakiet AMP, jądro), gdy trzeba zrestartować maszynę i gdy wyszła nowa wersja AMP – tylko wtedy, gdy pojawi się coś nowego.
 - **Języki**: `/lang` z przyciskami, zapamiętywany osobno dla każdego czatu.
 - **Sam się aktualizuje**: `/update` instaluje najnowsze wydanie z GitHuba po sprawdzeniu go na twoim serwerze; `/rollback` wraca do poprzedniego.
 
@@ -75,6 +76,9 @@ Wszystko w `/etc/amp-tg-bot.env` ([przykład](deploy/amp-tg-bot.env.example)); p
 | `AMP_URL` | – | adres panelu AMP, np. `http://127.0.0.1:8080` (dla `/servers`) |
 | `AMP_USER`, `AMP_PASS` | – | osobne konto AMP dla bota (bez 2FA) |
 | `AMP_NOTIFY` | `1` | zadania AMP z postępem i zmiany stanu serwerów na Telegramie; `0` = wyłączone |
+| `AMP_TASK_MIN_SECONDS` | `15` | zadania AMP krótsze niż tyle sekund nie trafiają na czat |
+| `AMP_TASK_IGNORE` | `remote sources\|refreshing\|checking for` | zadania AMP, których bot nigdy nie pokazuje (wyrażenie regularne) |
+| `UPDATES_CHECK_HOURS` | `6` | jak często sprawdzać aktualizacje; `0` = nigdy |
 | `RETENTION_DAYS` | `180` | jak długo trzymać historię graczy |
 | `BATTERY_WARN` | `45` | alert, gdy bateria spadnie poniżej tylu %; `0` wyłącza |
 | `TEMP_ALERT` | `85` | alert temperatury CPU, °C |

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.0 (2026-10)
+
+- **Less noise from AMP:** a task shows up only when it runs longer than 15 s (`AMP_TASK_MIN_SECONDS`), and routine ones such as the hourly "Updating remote sources" never do (`AMP_TASK_IGNORE`). Short tasks that fail are still reported.
+- **Updates** (`/updates`): system packages from apt with security updates marked 🛡 and the important ones listed (Tailscale, playit, Webmin, AMP's package, kernel, OpenSSL, OpenSSH), "restart required" with the packages that need it, and a new AMP version. Checked every 6 h (`UPDATES_CHECK_HOURS`); a message only when something new appears.
+
 ## 1.4.0 (2026-10)
 
 - `/servers` → a server: **💾 Backup** (AMP local backup), **👥 Players** (who is online according to AMP, with 👢 kick and 🚫 ban through the game console), **⌨️ Console** (type a command, confirm, see the server's answer) and **🔑 Password** (the game's password settings; your message with the new password is deleted from the chat right away).

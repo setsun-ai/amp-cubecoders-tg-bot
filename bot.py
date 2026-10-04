@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -74,6 +74,11 @@ AMP_PASS = os.environ.get("AMP_PASS", "")
 AMP_NOTIFY = os.environ.get("AMP_NOTIFY", "1") != "0"  # zadania i zmiany stanu z panelu AMP na Telegram
 AMP_TASK_SECONDS = 5
 AMP_STATE_SECONDS = 30
+# krotkie, rutynowe zadania panelu (np. "Updating remote sources" co godzine) nie trafiaja na czat
+AMP_TASK_MIN_SECONDS = int(os.environ.get("AMP_TASK_MIN_SECONDS", "15"))
+AMP_TASK_IGNORE = re.compile(os.environ.get("AMP_TASK_IGNORE", r"remote sources|refreshing|checking for"), re.I)
+UPDATES_CHECK_HOURS = float(os.environ.get("UPDATES_CHECK_HOURS", "6"))  # 0 = bez sprawdzania aktualizacji
+IMPORTANT_PACKAGES = ("tailscale", "playit", "webmin", "ampinstmgr", "openssh", "openssl", "linux-image", "sudo")
 POLL_SECONDS = 2
 RESCAN_SECONDS = 30
 HOST_CHECK_SECONDS = 30
@@ -248,6 +253,32 @@ STRINGS = {
     "c_rollback": ("Powrót do poprzedniej wersji", "Back to the previous version", "Вернуть предыдущую версию",
                    "Повернути попередню версію"),
     "c_help": ("Lista komend", "Command list", "Список команд", "Список команд"),
+    "upd_checking_now": ("🔎 Sprawdzam aktualizacje…", "🔎 Checking for updates…", "🔎 Проверяю обновления…",
+                         "🔎 Перевіряю оновлення…"),
+    "c_updates": ("Aktualizacje systemu i AMP", "System and AMP updates", "Обновления системы и AMP",
+                  "Оновлення системи та AMP"),
+    "upd_title": ("🛡 <b>Aktualizacje</b>", "🛡 <b>Updates</b>", "🛡 <b>Обновления</b>", "🛡 <b>Оновлення</b>"),
+    "upd_apt": ("📦 Pakiety do aktualizacji: {n} (bezpieczeństwa: {sec})",
+                "📦 Packages to update: {n} (security: {sec})",
+                "📦 Пакетов для обновления: {n} (безопасность: {sec})",
+                "📦 Пакетів для оновлення: {n} (безпека: {sec})"),
+    "upd_more": ("  …i {n} zwykłych", "  …and {n} regular ones", "  …и ещё {n} обычных", "  …і ще {n} звичайних"),
+    "upd_apt_none": ("📦 System aktualny.", "📦 The system is up to date.", "📦 Система обновлена.",
+                     "📦 Система оновлена."),
+    "upd_apt_unknown": ("📦 Nie udało się sprawdzić pakietów (apt).", "📦 Couldn't check packages (apt).",
+                        "📦 Не удалось проверить пакеты (apt).", "📦 Не вдалося перевірити пакети (apt)."),
+    "upd_reboot": ("🔁 <b>Wymagany restart systemu</b> (po: {pkgs})",
+                   "🔁 <b>System restart required</b> (after: {pkgs})",
+                   "🔁 <b>Нужна перезагрузка</b> (после: {pkgs})",
+                   "🔁 <b>Потрібне перезавантаження</b> (після: {pkgs})"),
+    "upd_amp": ("🆕 Nowa wersja AMP: {version} (panel → Aktualizacje)",
+                "🆕 New AMP version: {version} (panel → Updates)",
+                "🆕 Новая версия AMP: {version} (панель → Обновления)",
+                "🆕 Нова версія AMP: {version} (панель → Оновлення)"),
+    "upd_how": ("Instalacja: Webmin → System → Software Package Updates albo <code>sudo apt upgrade</code>.",
+                "Install: Webmin → System → Software Package Updates or <code>sudo apt upgrade</code>.",
+                "Установка: Webmin → System → Software Package Updates или <code>sudo apt upgrade</code>.",
+                "Встановлення: Webmin → System → Software Package Updates або <code>sudo apt upgrade</code>."),
     "c_servers": ("Serwery: start, stop, restart, aktualizacja", "Servers: start, stop, restart, update",
                   "Серверы: старт, стоп, перезапуск, обновление", "Сервери: старт, стоп, перезапуск, оновлення"),
     # zarzadzanie AMP
@@ -1255,21 +1286,23 @@ class AmpWatcher:
         return "\n".join(lines)
 
     def check_tasks(self):
-        current = self.amp.tasks(self.instances)
+        current = {k: v for k, v in self.amp.tasks(self.instances).items() if not AMP_TASK_IGNORE.search(v["name"])}
         now = time.time()
         for key, task in current.items():
             text = self.task_text(key[0], task)
-            known = self.tasks.get(key)
-            if known is None:
-                self.tasks[key] = {"msg": send(text), "text": text, "edited": now, "task": task}
+            known = self.tasks.setdefault(key, {"msg": None, "text": None, "edited": 0, "seen": now, "task": task})
+            known["task"] = task
+            if known["msg"] is None:
+                # wiadomosc dopiero, gdy zadanie trwa dluzej - krotkie konczy sie po cichu
+                if now - known["seen"] >= AMP_TASK_MIN_SECONDS:
+                    known.update(msg=send(text), text=text, edited=now)
             elif text != known["text"] and now - known["edited"] >= 10:  # Telegram nie lubi czestych edycji
-                if known["msg"]:
-                    edit(CHAT_ID, known["msg"], text)
-                known.update(text=text, edited=now, task=task)
-            else:
-                known["task"] = task
+                edit(CHAT_ID, known["msg"], text)
+                known.update(text=text, edited=now)
         for key in [k for k in self.tasks if k not in current]:  # zadanie zniknelo = skonczone
             known = self.tasks.pop(key)
+            if known["msg"] is None and not known["task"]["failed"]:
+                continue  # krotkie i udane: bez wiadomosci
             final = "task_failed" if known["task"]["failed"] else "task_done"
             text = self.task_text(key[0], known["task"], final)
             if known["msg"]:
@@ -1306,6 +1339,100 @@ class AmpWatcher:
                 self.check_tasks()
         except Exception as e:  # AMP chwilowo niedostepny: sprobujemy przy nastepnym obrocie
             log(f"AMP watcher: {e}")
+
+
+def apt_upgradable():
+    """Pakiety do aktualizacji wedlug apt: [{"name", "new", "old", "security"}] (bez roota)."""
+    try:
+        out = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True, timeout=120,
+                             env={**os.environ, "LANG": "C"}).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_apt(out)
+
+
+def parse_apt(text):
+    pkgs = []
+    for line in text.splitlines():
+        m = re.match(r"^([^/\s]+)/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from:\s*([^\]]+)\]", line)
+        if m:
+            pkgs.append({"name": m.group(1), "new": m.group(3), "old": m.group(4).strip(),
+                         "security": "-security" in m.group(2)})
+    return pkgs
+
+
+def reboot_required():
+    """None = restart niepotrzebny, inaczej lista pakietow, ktore go wymagaja."""
+    if not os.path.exists("/var/run/reboot-required"):
+        return None
+    return sorted(set((read("/var/run/reboot-required.pkgs") or "").split()))
+
+
+def amp_update_info(amp):
+    """(jest_aktualizacja, wersja) panelu AMP albo (False, None), gdy nie wiadomo."""
+    try:
+        info = amp.call("Core/GetUpdateInfo") if amp.configured else None
+    except Exception as e:
+        log(f"AMP GetUpdateInfo: {e}")
+        return False, None
+    if not isinstance(info, dict):
+        return False, None
+    lowered = {k.lower(): v for k, v in info.items()}
+    available = bool(lowered.get("updateavailable") or lowered.get("isupdateavailable"))
+    return available, lowered.get("version") or lowered.get("newversion")
+
+
+def updates_report(amp, lang=None, pkgs=None, reboot=None, amp_info=None):
+    pkgs = apt_upgradable() if pkgs is None else pkgs
+    reboot = reboot_required() if reboot is None else reboot
+    amp_available, amp_version = amp_update_info(amp) if amp_info is None else amp_info
+    lines = []
+    if pkgs is None:
+        lines.append(t("upd_apt_unknown", lang))
+    elif pkgs:
+        security = [p for p in pkgs if p["security"]]
+        lines.append(t("upd_apt", lang, n=len(pkgs), sec=len(security)))
+        important = [p for p in pkgs if p["security"] or p["name"].startswith(IMPORTANT_PACKAGES)]
+        for p in important[:15]:
+            mark = " 🛡" if p["security"] else ""
+            lines.append(f"  • <code>{esc(p['name'])}</code> {esc(p['old'])} → {esc(p['new'])}{mark}")
+        if len(pkgs) > len(important[:15]):
+            lines.append(t("upd_more", lang, n=len(pkgs) - len(important[:15])))
+    else:
+        lines.append(t("upd_apt_none", lang))
+    if reboot is not None:
+        lines.append(t("upd_reboot", lang, pkgs=esc(", ".join(reboot[:8]) or "?")))
+    if amp_available:
+        lines.append(t("upd_amp", lang, version=esc(amp_version or "?")))
+    if pkgs:
+        lines.append(t("upd_how", lang))
+    return t("upd_title", lang) + "\n" + "\n".join(lines)
+
+
+class UpdateMonitor:
+    """Co kilka godzin: aktualizacje apt (z bezpieczenstwem), restart systemu, nowa wersja AMP."""
+
+    def __init__(self, amp, db):
+        self.amp, self.db = amp, db
+        self.last = 0
+
+    def poll(self):
+        if not UPDATES_CHECK_HOURS or time.time() - self.last < UPDATES_CHECK_HOURS * 3600:
+            return
+        self.last = time.time()
+        pkgs, reboot = apt_upgradable(), reboot_required()
+        amp_info = amp_update_info(self.amp)
+        if pkgs is None:
+            return
+        # powiadomienie tylko o czyms nowym: bezpieczenstwo, restart, wazne pakiety, AMP
+        keys = sorted(f"{p['name']}={p['new']}" for p in pkgs
+                      if p["security"] or p["name"].startswith(IMPORTANT_PACKAGES))
+        signature = json.dumps([keys, reboot, amp_info[0] and amp_info[1]])
+        if signature == meta_get(self.db, "updates_seen"):
+            return
+        meta_set(self.db, "updates_seen", signature)
+        if keys or reboot is not None or amp_info[0]:
+            send(updates_report(self.amp, pkgs=pkgs, reboot=reboot, amp_info=amp_info))
 
 
 def amp_test():
@@ -1349,7 +1476,7 @@ def amp_test():
 # ---------- komendy na Telegramie ----------
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
-COMMANDS = [("online", ""), ("servers", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"),
+COMMANDS = [("online", ""), ("servers", ""), ("updates", ""), ("status", ""), ("history", " [N]"), ("player", " NICK"),
             ("week", ""), ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
@@ -1565,6 +1692,9 @@ class Commands:
             send(weekly_summary(self.db, lang=lang), chat)
         elif cmd == "status":
             send(cmd_status(self.instances, lang), chat)
+        elif cmd in ("updates", "aktualizacje"):
+            send(t("upd_checking_now", lang), chat)
+            send(updates_report(self.amp, lang), chat)
         elif cmd in ("servers", "serwery", "server"):
             text, markup = self.servers_view(lang)
             send(text, chat, markup=markup)
@@ -1851,6 +1981,7 @@ def run():
     host = HostMonitor()
     commands = Commands(db, instances)
     amp_watch = AmpWatcher(commands.amp)
+    updates = UpdateMonitor(commands.amp, db)
     startup = True
     last_scan = last_clean = last_host = 0
     log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
@@ -1905,6 +2036,10 @@ def run():
             db.commit()
             last_clean = now
         amp_watch.poll()
+        try:
+            updates.poll()
+        except Exception as e:
+            log(f"Sprawdzanie aktualizacji: {e}")
         commands.poll(POLL_SECONDS)
 
 

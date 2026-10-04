@@ -25,9 +25,10 @@
 - **💀 Deaths** (Valheim, Minecraft) with a daily counter.
 - **Weekly summary** on Sunday evening: play time per game, top players, the busiest hour.
 - **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats or the [playit.gg](https://playit.gg) tunnel goes down.
-- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
+- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/updates`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
 - **Server control** (`/servers`): start, stop, restart, game update and backup of AMP instances, the list of players online with kick and ban, the game console (with the server's answer) and the server password – all with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`.
 - **AMP panel on Telegram**: updates, backups and downloads started from the bot or the panel show up as one message with a live progress bar (▓▓▓▓░░░░░░ 40%), edited in place until ✅ done or ❌ failed; servers that start, stop or crash are reported too (`AMP_NOTIFY=0` turns it off).
+- **Updates** (`/updates`): every few hours the bot checks system packages (apt) and tells you when there are security updates or important ones (Tailscale, playit, Webmin, AMP's own package, kernel), when the machine needs a restart, and when a new AMP version is out - only when something new appears.
 - **Languages**: `/lang` with buttons, remembered per chat.
 - **Self-update**: `/update` installs the newest GitHub release after testing it on your server; `/rollback` goes back.
 
@@ -75,6 +76,9 @@ All in `/etc/amp-tg-bot.env` ([example](deploy/amp-tg-bot.env.example)); restart
 | `AMP_URL` | – | AMP panel address, e.g. `http://127.0.0.1:8080` (for `/servers`) |
 | `AMP_USER`, `AMP_PASS` | – | a separate AMP user for the bot (no 2FA) |
 | `AMP_NOTIFY` | `1` | AMP tasks with progress and server state changes on Telegram; `0` = off |
+| `AMP_TASK_MIN_SECONDS` | `15` | AMP tasks shorter than this stay silent |
+| `AMP_TASK_IGNORE` | `remote sources\|refreshing\|checking for` | AMP tasks never shown (regular expression) |
+| `UPDATES_CHECK_HOURS` | `6` | how often to check for updates; `0` = never |
 | `RETENTION_DAYS` | `180` | how long the player history is kept |
 | `BATTERY_WARN` | `45` | alert when the battery drops below this %; `0` turns it off |
 | `TEMP_ALERT` | `85` | CPU temperature alert, °C |
