@@ -764,3 +764,49 @@ def test_unban(env, monkeypatch):
     n = len(console_sent())
     click("ub!:Mc01", friend)
     assert len(console_sent()) == n
+
+
+
+def test_dota_ids():
+    assert bot.dota_account_id("86745912") == 86745912
+    assert bot.dota_account_id("76561198047011640") == 86745912  # SteamID64
+    assert bot.dota_account_id("https://www.opendota.com/players/86745912/matches") == 86745912
+    assert bot.dota_account_id("https://steamcommunity.com/profiles/76561198047011640/") == 86745912
+    assert bot.dota_account_id("https://steamcommunity.com/id/somename") is None
+    assert bot.dota_rank({"rank_tier": 54}) == "Legend 4"
+    assert bot.dota_rank({"rank_tier": 80, "leaderboard_rank": 812}) == "Immortal #812"
+    assert bot.dota_rank({}, "en") == "unranked"
+
+
+def test_dota_watch(env, monkeypatch):
+    matches = [{"match_id": 100, "player_slot": 1, "radiant_win": True, "hero_id": 1, "kills": 1, "deaths": 2,
+                "assists": 3, "gold_per_min": 400, "xp_per_min": 500, "duration": 1800, "game_mode": 22,
+                "lobby_type": 7, "start_time": 1_700_000_000}]
+    api = {"players/42": {"profile": {"personaname": "Pudge Fan"}, "rank_tier": 35},
+           "players/42/recentMatches": matches, "constants/heroes": {"1": {"localized_name": "Anti-Mage"}},
+           "players/7": {"profile": None}, "players/7/recentMatches": [],
+           "players/9": {"profile": {"personaname": "Private"}}, "players/9/recentMatches": []}
+    monkeypatch.setattr(bot, "opendota", lambda path: api[path])
+    c = bot.Commands(env.db, env.inst)
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/dota"})
+    assert "Friend ID" in env.sent[-1]
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/dota add https://www.opendota.com/players/42"})
+    assert "Pudge Fan" in env.sent[-1] and "Crusader 5" in env.sent[-1]
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/dota add 7"})
+    assert "7" in env.sent[-1] and "❌" in env.sent[-1]
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/dota add 9"})
+    assert "Expose Public Match Data" in env.sent[-1]
+
+    w = bot.DotaWatcher(env.db)
+    env.sent.clear()
+    w.poll()
+    assert env.sent == []  # mecz sprzed dodania nie jest nowy
+    matches.append({**matches[0], "match_id": 101, "player_slot": 130, "kills": 9})  # Dire, Radiant wygrywa
+    w.last = 0
+    w.poll()
+    assert len(env.sent) == 1 and "Pudge Fan" in env.sent[0] and "Przegrana" in env.sent[0]
+    assert "Anti-Mage" in env.sent[0]
+    assert "KDA 9/2/3" in env.sent[0] and "rankingowy" in env.sent[0] and "matches/101" in env.sent[0]
+    w.last = 0
+    w.poll()
+    assert len(env.sent) == 1  # bez powtorki

@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -79,6 +79,10 @@ AMP_TASK_MIN_SECONDS = int(os.environ.get("AMP_TASK_MIN_SECONDS", "15"))
 AMP_TASK_IGNORE = re.compile(os.environ.get("AMP_TASK_IGNORE", r"remote sources|refreshing|checking for"), re.I)
 UPDATES_CHECK_HOURS = float(os.environ.get("UPDATES_CHECK_HOURS", "6"))  # 0 = bez sprawdzania aktualizacji
 IMPORTANT_PACKAGES = ("tailscale", "playit", "webmin", "ampinstmgr", "openssh", "openssl", "linux-image", "sudo")
+# Dota 2 przez OpenDota (darmowe API bez klucza; ok. 2000 zapytan dziennie): co ile minut sprawdzac mecze
+DOTA_CHECK_MINUTES = float(os.environ.get("DOTA_CHECK_MINUTES", "10"))  # 0 = wylaczone
+OPENDOTA_API = "https://api.opendota.com/api"
+STEAM64_BASE = 76561197960265728
 POLL_SECONDS = 2
 RESCAN_SECONDS = 30
 HOST_CHECK_SECONDS = 30
@@ -345,6 +349,56 @@ STRINGS = {
     "act_kick": ("👢 Kick", "👢 Kick", "👢 Кик", "👢 Кік"),
     "act_ban": ("🚫 Ban", "🚫 Ban", "🚫 Бан", "🚫 Бан"),
     "act_unban": ("♻️ Unban", "♻️ Unban", "♻️ Разбан", "♻️ Розбан"),
+    "c_dota": ("Dota 2: mecze graczy", "Dota 2: players' matches", "Dota 2: матчи игроков", "Dota 2: матчі гравців"),
+    "dota_guide": (
+        "🎮 <b>Dota 2</b> – powiadomienia o meczach (OpenDota).\n\nDodaj gracza: <code>/dota add ID</code>\n"
+        "ID to <b>Friend ID</b> z profilu w Docie (liczba przy nicku) albo numer z linku opendota.com/players/…, "
+        "dotabuff.com/players/… lub steamcommunity.com/profiles/….\n\nGracz musi mieć w Docie włączone "
+        "<i>Expose Public Match Data</i> (Ustawienia → Opcje → Społeczność). Bot sprawdzi to przy dodawaniu.",
+        "🎮 <b>Dota 2</b> – match notifications (OpenDota).\n\nAdd a player: <code>/dota add ID</code>\n"
+        "The ID is the <b>Friend ID</b> from the Dota profile (the number by the nick) or the number from an "
+        "opendota.com/players/…, dotabuff.com/players/… or steamcommunity.com/profiles/… link.\n\nThe player "
+        "needs <i>Expose Public Match Data</i> on in Dota (Settings → Options → Social). The bot checks it when "
+        "adding.",
+        "🎮 <b>Dota 2</b> – уведомления о матчах (OpenDota).\n\nДобавить игрока: <code>/dota add ID</code>\n"
+        "ID – это <b>Friend ID</b> из профиля в Доте (число у ника) или номер из ссылки opendota.com/players/…, "
+        "dotabuff.com/players/… или steamcommunity.com/profiles/….\n\nУ игрока в Доте должно быть включено "
+        "<i>Expose Public Match Data</i> (Настройки → Опции → Сообщество). Бот проверит это при добавлении.",
+        "🎮 <b>Dota 2</b> – сповіщення про матчі (OpenDota).\n\nДодати гравця: <code>/dota add ID</code>\n"
+        "ID – це <b>Friend ID</b> з профілю в Доті (число біля ніку) або номер із посилання opendota.com/players/…, "
+        "dotabuff.com/players/… чи steamcommunity.com/profiles/….\n\nУ гравця в Доті має бути ввімкнено "
+        "<i>Expose Public Match Data</i> (Налаштування → Опції → Спільнота). Бот перевірить це під час додавання."),
+    "dota_title": ("🎮 <b>Dota 2</b> – obserwowani gracze (🗑 usuwa):",
+                   "🎮 <b>Dota 2</b> – watched players (🗑 removes):",
+                   "🎮 <b>Dota 2</b> – отслеживаемые игроки (🗑 удаляет):",
+                   "🎮 <b>Dota 2</b> – гравці, яких стежимо (🗑 видаляє):"),
+    "dota_added": ("✅ Dodano: {name} ({rank}). Ostatni mecz: {last}.",
+                   "✅ Added: {name} ({rank}). Last match: {last}.",
+                   "✅ Добавлен: {name} ({rank}). Последний матч: {last}.",
+                   "✅ Додано: {name} ({rank}). Останній матч: {last}."),
+    "dota_private": ("⚠️ {name}: OpenDota nie widzi żadnych meczów – pewnie wyłączone <i>Expose Public Match Data</i> "
+                     "(Dota: Ustawienia → Opcje → Społeczność). Po włączeniu mecze pojawią się same.",
+                     "⚠️ {name}: OpenDota sees no matches – <i>Expose Public Match Data</i> is probably off "
+                     "(Dota: Settings → Options → Social). Once it's on, matches show up by themselves.",
+                     "⚠️ {name}: OpenDota не видит матчей – наверное, выключено <i>Expose Public Match Data</i> "
+                     "(Дота: Настройки → Опции → Сообщество). После включения матчи появятся сами.",
+                     "⚠️ {name}: OpenDota не бачить матчів – мабуть, вимкнено <i>Expose Public Match Data</i> "
+                     "(Дота: Налаштування → Опції → Спільнота). Після ввімкнення матчі з'являться самі."),
+    "dota_not_found": ("❌ OpenDota nie zna gracza {id} – sprawdź numer.", "❌ OpenDota doesn't know player {id} – "
+                       "check the number.", "❌ OpenDota не знает игрока {id} – проверь номер.",
+                       "❌ OpenDota не знає гравця {id} – перевір номер."),
+    "dota_bad_id": ("❌ To nie wygląda na ID gracza – podaj Friend ID (liczbę) albo link do profilu.",
+                    "❌ That doesn't look like a player ID – give the Friend ID (a number) or a profile link.",
+                    "❌ Это не похоже на ID игрока – укажи Friend ID (число) или ссылку на профиль.",
+                    "❌ Це не схоже на ID гравця – вкажи Friend ID (число) або посилання на профіль."),
+    "dota_removed": ("🗑 Usunięto: {name}", "🗑 Removed: {name}", "🗑 Удалён: {name}", "🗑 Видалено: {name}"),
+    "dota_error": ("❌ OpenDota nie odpowiada: {err}", "❌ OpenDota doesn't answer: {err}",
+                   "❌ OpenDota не отвечает: {err}", "❌ OpenDota не відповідає: {err}"),
+    "dota_win": ("✅ Wygrana", "✅ Win", "✅ Победа", "✅ Перемога"),
+    "dota_loss": ("❌ Przegrana", "❌ Loss", "❌ Поражение", "❌ Поразка"),
+    "dota_unranked": ("bez rangi", "unranked", "без ранга", "без рангу"),
+    "dota_never": ("brak", "none", "нет", "немає"),
+    "dota_ranked": ("rankingowy", "ranked", "рейтинговый", "рейтинговий"),
     "c_unban": ("Odbanuj gracza", "Unban a player", "Разбанить игрока", "Розбанити гравця"),
     "ub_prompt": ("♻️ <b>{name}</b>: napisz nick (albo SteamID) gracza do odbanowania.",
                   "♻️ <b>{name}</b>: type the nick (or SteamID) of the player to unban.",
@@ -892,6 +946,7 @@ def open_db(readonly=False):
         CREATE TABLE IF NOT EXISTS warned(instance TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS friends(user_id INTEGER PRIMARY KEY, name TEXT, instances TEXT, added INTEGER);
+        CREATE TABLE IF NOT EXISTS dota(account_id INTEGER PRIMARY KEY, name TEXT, last_match INTEGER, added INTEGER);
     """)
     # sesje niezamkniete przy poprzednim wylaczeniu bota
     db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
@@ -1638,6 +1693,101 @@ class UpdateMonitor:
             send(updates_report(self.amp, pkgs=pkgs, reboot=reboot, amp_info=amp_info))
 
 
+# ---------- Dota 2 (OpenDota) ----------
+
+DOTA_MEDALS = {1: "Herald", 2: "Guardian", 3: "Crusader", 4: "Archon", 5: "Legend", 6: "Ancient", 7: "Divine",
+               8: "Immortal"}
+DOTA_MODES = {1: "All Pick", 2: "Captains Mode", 3: "Random Draft", 4: "Single Draft", 5: "All Random",
+              16: "Captains Draft", 18: "Ability Draft", 19: "Event", 20: "All Random Deathmatch", 21: "1v1 Mid",
+              22: "All Pick", 23: "Turbo"}
+
+
+def opendota(path):
+    req = urllib.request.Request(f"{OPENDOTA_API}/{path}", headers={"User-Agent": f"amp-tg-bot/{VERSION}"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read())
+
+
+def dota_account_id(text):
+    """Friend ID (Steam32), SteamID64 albo link opendota/dotabuff/steamcommunity -> Steam32 albo None."""
+    text = (text or "").strip()
+    m = re.search(r"(?:players|profiles)/(\d+)", text) or re.fullmatch(r"(\d+)", text)
+    if not m:
+        return None
+    n = int(m.group(1))
+    if n > STEAM64_BASE:
+        n -= STEAM64_BASE
+    return n if 0 < n < 2 ** 32 else None
+
+
+def dota_rank(profile, lang=None):
+    tier = (profile or {}).get("rank_tier")
+    if not tier:
+        return t("dota_unranked", lang)
+    medal = DOTA_MEDALS.get(tier // 10, "?")
+    if tier // 10 == 8:
+        place = profile.get("leaderboard_rank")
+        return f"{medal} #{place}" if place else medal
+    return f"{medal} {tier % 10}" if tier % 10 else medal
+
+
+def dota_match_text(name, m, heroes, rank="", lang=None):
+    radiant = m.get("player_slot", 0) < 128
+    won = bool(m.get("radiant_win")) == radiant
+    mode = DOTA_MODES.get(m.get("game_mode"), f"mode {m.get('game_mode')}")
+    if m.get("lobby_type") == 7:
+        mode += f" ({t('dota_ranked', lang)})"
+    lines = [f"🎮 <b>{esc(name)}</b>: {t('dota_win' if won else 'dota_loss', lang)} – "
+             f"{esc(heroes.get(str(m.get('hero_id')), '?'))}",
+             f"KDA {m.get('kills', 0)}/{m.get('deaths', 0)}/{m.get('assists', 0)} · GPM {m.get('gold_per_min', 0)}"
+             f" · XPM {m.get('xp_per_min', 0)} · {fmt_duration(m.get('duration', 0), lang)} · {esc(mode)}"
+             + (f" · {esc(rank)}" if rank else ""),
+             f'<a href="https://www.opendota.com/matches/{m.get("match_id")}">OpenDota</a>']
+    return "\n".join(lines)
+
+
+class DotaWatcher:
+    """Co DOTA_CHECK_MINUTES: nowe mecze obserwowanych graczy -> jedna wiadomosc na mecz (na czat admina)."""
+
+    def __init__(self, db):
+        self.db = db
+        self.last = 0
+        self.heroes, self.heroes_at = {}, 0
+
+    def hero_names(self):
+        if not self.heroes or time.time() - self.heroes_at > 86400:
+            try:
+                data = opendota("constants/heroes")
+                self.heroes = {str(k): v.get("localized_name", "?") for k, v in data.items()}
+                self.heroes_at = time.time()
+            except Exception as e:
+                log(f"OpenDota heroes: {e}")
+        return self.heroes
+
+    def poll(self):
+        if not DOTA_CHECK_MINUTES or time.time() - self.last < DOTA_CHECK_MINUTES * 60:
+            return
+        self.last = time.time()
+        for account, name, last in self.db.execute("SELECT account_id, name, last_match FROM dota").fetchall():
+            try:
+                matches = opendota(f"players/{account}/recentMatches") or []
+            except Exception as e:
+                log(f"OpenDota {account}: {e}")
+                continue
+            new = sorted((m for m in matches if m.get("match_id", 0) > (last or 0)), key=lambda m: m["match_id"])
+            if not new:
+                continue
+            try:
+                rank = dota_rank(opendota(f"players/{account}"))
+            except Exception:
+                rank = ""
+            heroes = self.hero_names()
+            for m in new[-5:]:  # po dlugiej przerwie bota - tylko kilka ostatnich
+                send(dota_match_text(name, m, heroes, rank))
+            self.db.execute("UPDATE dota SET last_match=? WHERE account_id=?", (new[-1]["match_id"], account))
+            self.db.commit()
+
+
 def amp_test():
     """--amp-test: logowanie, lista instancji i funkcje API przydatne dla bota."""
     amp = Amp()
@@ -1680,8 +1830,8 @@ def amp_test():
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
 COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), ("status", ""), ("history", " [N]"),
-            ("player", " NICK"), ("unban", " NICK"), ("week", ""), ("lang", ""), ("version", ""), ("update", ""),
-            ("rollback", ""), ("help", "")]
+            ("player", " NICK"), ("unban", " NICK"), ("week", ""), ("dota", " [add ID]"), ("lang", ""),
+            ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
 FRIEND_COMMANDS = [("servers", ""), ("unban", " NICK"), ("lang", ""), ("help", "")]
 # przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
@@ -1944,6 +2094,8 @@ class Commands:
             send(text, chat, markup=markup)
         elif cmd == "unban":
             self.unban_command(chat, args, lang)
+        elif cmd == "dota":
+            self.dota_command(chat, args, lang)
         elif cmd == "lang":
             self.lang_command(chat, args, lang)
         elif cmd == "version":
@@ -1981,6 +2133,44 @@ class Commands:
         send(t("ub_pick", lang, player=esc(player)), chat,
              markup={"inline_keyboard": rows + [[self.btn("btn_cancel", "srv", lang)]]})
 
+    def dota_view(self, lang):
+        rows = [[{"text": f"🗑 {name}"[:60], "callback_data": f"dr:{acc}"}]
+                for acc, name in self.db.execute("SELECT account_id, name FROM dota ORDER BY name")]
+        if not rows:
+            return t("dota_guide", lang), None
+        return t("dota_title", lang) + "\n\n" + t("dota_guide", lang), {"inline_keyboard": rows}
+
+    def dota_command(self, chat, args, lang):
+        """/dota - lista i instrukcja; /dota add ID - sprawdza gracza w OpenDota i zaczyna go obserwowac."""
+        if args and args[0].lower() in ("add", "dodaj"):
+            args = args[1:]
+        if not args:
+            text, markup = self.dota_view(lang)
+            send(text, chat, markup=markup)
+            return
+        account = dota_account_id(args[0])
+        if account is None:
+            send(t("dota_bad_id", lang), chat)
+            return
+        try:
+            profile = opendota(f"players/{account}")
+            matches = opendota(f"players/{account}/recentMatches") or []
+        except Exception as e:
+            send(t("dota_error", lang, err=esc(getattr(e, "code", e))), chat)
+            return
+        name = ((profile or {}).get("profile") or {}).get("personaname")
+        if not name:
+            send(t("dota_not_found", lang, id=account), chat)
+            return
+        last = max((m.get("match_id", 0) for m in matches), default=0)  # stare mecze nie wpadna jako nowe
+        self.db.execute("INSERT OR REPLACE INTO dota(account_id, name, last_match, added) VALUES (?,?,?,?)",
+                        (account, name, last, int(time.time())))
+        self.db.commit()
+        when = ts(max(m.get("start_time", 0) for m in matches)) if matches else t("dota_never", lang)
+        send(t("dota_added", lang, name=esc(name), rank=esc(dota_rank(profile, lang)), last=when), chat)
+        if not matches:
+            send(t("dota_private", lang, name=esc(name)), chat)
+
     def lang_command(self, chat, args, lang):
         if args and norm_lang(args[0]):
             self.set_lang(chat, norm_lang(args[0]))
@@ -1999,6 +2189,16 @@ class Commands:
         if self.scope is False or chat is None:
             return
         if self.scope is not None and not self.friend_may(data):
+            return
+        if data.startswith("dr:") and self.scope is None:
+            acc = data[3:]
+            row = self.db.execute("SELECT name FROM dota WHERE account_id=?", (acc,)).fetchone()
+            self.db.execute("DELETE FROM dota WHERE account_id=?", (acc,))
+            self.db.commit()
+            lang = lang_for(chat)
+            text, markup = self.dota_view(lang)
+            edit(chat, cq["message"]["message_id"],
+                 (t("dota_removed", lang, name=esc(row[0])) + "\n\n" if row else "") + text, markup)
             return
         if data == "frl" or data.startswith(("fr:", "frt:", "frs:", "frd:")):
             text, markup = self.friends_callback(data, lang_for(chat))
@@ -2527,6 +2727,7 @@ def run():
     commands = Commands(db, instances)
     amp_watch = AmpWatcher(commands.amp)
     updates = UpdateMonitor(commands.amp, db)
+    dota = DotaWatcher(db)
     startup = True
     last_scan = last_clean = last_host = 0
     log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
@@ -2587,6 +2788,10 @@ def run():
             updates.poll()
         except Exception as e:
             log(f"Sprawdzanie aktualizacji: {e}")
+        try:
+            dota.poll()
+        except Exception as e:
+            log(f"Dota: {e}")
         commands.poll(POLL_SECONDS)
 
 

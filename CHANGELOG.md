@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.0 (2026-10)
+
+- **Dota 2 matches** (`/dota`): watch players through the free OpenDota API (no key). `/dota add ID` takes the Friend ID, a SteamID64 or an OpenDota/Dotabuff/Steam profile link, checks the player and warns when *Expose Public Match Data* looks off. After each new match: one message with win/loss, hero, KDA, GPM/XPM, duration, mode (ranked marked) and rank. `/dota` lists the players with 🗑. Every 10 min (`DOTA_CHECK_MINUTES`; `0` turns it off).
+
 ## 1.8.0 (2026-10)
 
 - **Unban:** `/unban NAME` (pick the server) or 👥 Players → ♻️ (type the name) - the game's own command, `pardon` in Minecraft, `unban` elsewhere; with a confirmation, for friends on their servers too.
