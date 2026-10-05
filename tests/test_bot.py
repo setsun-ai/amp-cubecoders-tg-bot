@@ -884,3 +884,16 @@ def test_dota_rank_daily_and_private_players(env, monkeypatch):
     w.poll()
     assert "players/5/refresh" in calls and "players/5/recentMatches" in calls
     assert env.sent == ["📈 <b>Hidden</b>: Archon 4 → Archon 5"]
+
+
+def test_same_task_twice_is_one_message(watcher, env, monkeypatch):
+    w, edits = watcher
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    task = {"Name": "Starting Instance", "Description": "Starting Valheim", "IsIndeterminate": True}
+    w.amp.ads_tasks = [{**task, "Id": "a"}, {**task, "Id": "b"}]
+    w.check_tasks()
+    clock[0] += 20
+    w.amp.ads_tasks = [{**task, "Id": "c"}]  # i jeszcze nowe Id w trakcie
+    w.check_tasks()
+    assert sum("Starting Instance" in m for m in env.sent) == 1

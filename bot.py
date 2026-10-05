@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -1437,7 +1437,9 @@ class Amp:
                 log(f"AMP GetTasks {label or 'ADS'}: {e}")
                 continue
             for task in self.norm_tasks(raw):
-                found[(label, task["id"])] = task
+                # po nazwie i opisie, nie po Id: panel potrafi pokazac jedno uruchamianie jako dwa zadania
+                # (albo zmienic mu Id) - wtedy szly dwie identyczne wiadomosci
+                found.setdefault((label, f"{task['name']}|{task['desc']}"), task)
         return found
 
     ACTIONS = ("start", "stop", "restart", "update", "backup")

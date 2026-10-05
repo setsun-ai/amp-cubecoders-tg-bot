@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.0.1 (2026-10)
+
+- One AMP task no longer shows up as two identical messages (e.g. "Starting Instance" when the panel lists it twice or changes its id); tasks are matched by name and description.
+
 ## 2.0.0 (2026-10)
 
 - **A separate bot for friends** (`TG_FRIENDS_TOKEN`): one process, one database, two Telegram bots. Friends write to theirs (requests still reach you with ➕, every action is reported to you), and the main bot answers only the admin. Without the token everything works as before.
