@@ -32,9 +32,10 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -350,6 +351,45 @@ STRINGS = {
     "btn_refresh": ("🔄 Odśwież", "🔄 Refresh", "🔄 Обновить", "🔄 Оновити"),
     "act_start": ("▶️ Uruchom serwer", "▶️ Start server", "▶️ Запустить сервер", "▶️ Запустити сервер"),
     "act_stop": ("⏹ Zatrzymaj serwer", "⏹ Stop server", "⏹ Остановить сервер", "⏹ Зупинити сервер"),
+    "btn_mods": ("🧩 Mody", "🧩 Mods", "🧩 Моды", "🧩 Моди"),
+    "btn_mod_add": ("➕ Dodaj mod", "➕ Add a mod", "➕ Добавить мод", "➕ Додати мод"),
+    "mod_title": ("🧩 <b>{name}</b> – mody ({game}):", "🧩 <b>{name}</b> – mods ({game}):",
+                  "🧩 <b>{name}</b> – моды ({game}):", "🧩 <b>{name}</b> – моди ({game}):"),
+    "mod_no_dir": ("Nie znalazłem folderu modów tej instancji. Minecraft: serwer z Forge, NeoForge albo Fabric; "
+                   "Valheim: w ⚙️ włącz „Install BepInEx” i zrób ⬆️ Aktualizację gry.",
+                   "I couldn't find this instance's mod folder. Minecraft: a Forge, NeoForge or Fabric server; "
+                   "Valheim: turn on \"Install BepInEx\" in ⚙️ and run ⬆️ Game update.",
+                   "Не нашёл папку модов этого инстанса. Minecraft: сервер на Forge, NeoForge или Fabric; "
+                   "Valheim: включи «Install BepInEx» в ⚙️ и сделай ⬆️ Обновление игры.",
+                   "Не знайшов теку модів цього інстансу. Minecraft: сервер на Forge, NeoForge або Fabric; "
+                   "Valheim: увімкни «Install BepInEx» у ⚙️ і зроби ⬆️ Оновлення гри."),
+    "mod_empty": ("Brak modów.", "No mods.", "Модов нет.", "Модів немає."),
+    "mod_prompt": ("➕ Wyślij plik moda ({types}, do 20 MB) albo napisz nazwę lub wklej link z {source}.",
+                   "➕ Send the mod file ({types}, up to 20 MB) or type a name or paste a link from {source}.",
+                   "➕ Пришли файл мода ({types}, до 20 МБ) или напиши название либо вставь ссылку с {source}.",
+                   "➕ Надішли файл мода ({types}, до 20 МБ) або напиши назву чи встав посилання з {source}."),
+    "mod_results": ("🔎 „{q}” – wybierz mod:", "🔎 \"{q}\" – pick a mod:", "🔎 «{q}» – выбери мод:",
+                    "🔎 «{q}» – обери мод:"),
+    "mod_nothing": ("Nic nie znalazłem dla „{q}”.", "Nothing found for \"{q}\".", "Ничего не нашёл для «{q}».",
+                    "Нічого не знайшов для «{q}»."),
+    "mod_working": ("⏳ Instaluję {mod} razem z zależnościami…", "⏳ Installing {mod} with its dependencies…",
+                    "⏳ Устанавливаю {mod} вместе с зависимостями…", "⏳ Встановлюю {mod} разом із залежностями…"),
+    "mod_installed": ("✅ Zainstalowano: {list}", "✅ Installed: {list}", "✅ Установлено: {list}",
+                      "✅ Встановлено: {list}"),
+    "mod_removed": ("🗑 {mod} – przeniesiony do kosza (folder .tg-trash obok, da się przywrócić).",
+                    "🗑 {mod} – moved to the bin (the .tg-trash folder next to it, can be restored).",
+                    "🗑 {mod} – перемещён в корзину (папка .tg-trash рядом, можно вернуть).",
+                    "🗑 {mod} – переміщено до кошика (тека .tg-trash поруч, можна повернути)."),
+    "mod_restart": ("🔁 Zrestartuj serwer, żeby zmiany zadziałały. Gracze zwykle potrzebują tych samych modów "
+                    "u siebie.",
+                    "🔁 Restart the server for the changes to apply. Players usually need the same mods too.",
+                    "🔁 Перезапусти сервер, чтобы изменения сработали. Игрокам обычно нужны те же моды.",
+                    "🔁 Перезапусти сервер, щоб зміни запрацювали. Гравцям зазвичай потрібні ті самі моди."),
+    "mod_error": ("❌ Nie udało się: {err}", "❌ Failed: {err}", "❌ Не получилось: {err}", "❌ Не вдалося: {err}"),
+    "mod_no_version": ("brak wersji „{mod}” dla {target}", "no version of \"{mod}\" for {target}",
+                       "нет версии «{mod}» для {target}", "немає версії «{mod}» для {target}"),
+    "mod_bad_file": ("ten plik nie pasuje – wyślij {types}", "this file doesn't fit – send {types}",
+                     "этот файл не подходит – пришли {types}", "цей файл не підходить – надішли {types}"),
     "act_on": ("⏻ Włącz instancję", "⏻ Turn instance on", "⏻ Включить инстанс", "⏻ Увімкнути інстанс"),
     "act_off": ("⏻ Wyłącz instancję", "⏻ Turn instance off", "⏻ Выключить инстанс", "⏻ Вимкнути інстанс"),
     "op_started": ("⏳ {action} – postęp pokażę w wiadomości poniżej.",
@@ -1937,6 +1977,256 @@ class UpdateMonitor:
             send(updates_report(self.amp, pkgs=pkgs, reboot=reboot, amp_info=amp_info))
 
 
+# ---------- mody (tylko admin) ----------
+
+MODRINTH_API = "https://api.modrinth.com/v2"
+THUNDERSTORE = "https://thunderstore.io"
+MOD_MAX_BYTES = 300 * 1024 * 1024
+ZIP_SKIP = {"icon.png", "readme.md", "changelog.md", "license", "license.md", "license.txt"}
+
+
+class ModError(Exception):
+    pass
+
+
+def http_json(url, timeout=30):
+    req = urllib.request.Request(url, headers={"User-Agent": f"{GITHUB_REPO}/{VERSION} (amp-tg-bot)",
+                                               "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read())
+
+
+def http_download(url, dest):
+    """Plik z sieci do `dest` (przez .part, zeby przerwane pobieranie nie zostawilo polowy moda)."""
+    req = urllib.request.Request(url, headers={"User-Agent": f"{GITHUB_REPO}/{VERSION} (amp-tg-bot)"})
+    tmp = dest + ".part"
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    size = 0
+    with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as f:
+        while chunk := r.read(65536):
+            size += len(chunk)
+            if size > MOD_MAX_BYTES:
+                raise ModError("> 300 MB")
+            f.write(chunk)
+    os.replace(tmp, dest)
+
+
+def _version_key(text):
+    return [int(x) for x in re.findall(r"\d+", text)]
+
+
+def minecraft_loader(mc_dir):
+    """(loader, wersja Minecrafta) z bibliotek serwera: forge / neoforge / fabric albo (None, None)."""
+    lib = os.path.join(mc_dir, "libraries", "net")
+    forge = sorted(glob.glob(os.path.join(lib, "minecraftforge", "forge", "*")), key=_version_key)
+    if forge:
+        return "forge", os.path.basename(forge[-1]).split("-")[0]
+    neo = sorted(glob.glob(os.path.join(lib, "neoforged", "neoforge", "*")), key=_version_key)
+    if neo:
+        major, minor = (os.path.basename(neo[-1]).split(".") + ["0"])[:2]
+        return "neoforge", f"1.{major}" + (f".{minor}" if minor != "0" else "")
+    fabric = sorted(glob.glob(os.path.join(lib, "fabricmc", "intermediary", "*")), key=_version_key)
+    if fabric:
+        return "fabric", os.path.basename(fabric[-1])
+    return None, None
+
+
+def mod_target(name):
+    """
+    Gdzie i jak instalowac mody instancji: Minecraft (mods/, Modrinth, wersja i loader z bibliotek serwera)
+    albo gra z BepInEx (BepInEx/plugins, Thunderstore - np. Valheim). None = nie ma folderu modow.
+    """
+    root = os.path.join(INSTANCES_DIR, name)
+    mc = os.path.join(root, "Minecraft")
+    if os.path.isdir(mc):
+        loader, version = minecraft_loader(mc)
+        if loader:
+            return {"game": "minecraft", "dir": os.path.join(mc, "mods"), "loader": loader, "version": version,
+                    "label": f"Minecraft {version} · {loader}", "types": ".jar", "source": "Modrinth"}
+    plugins = sorted(glob.glob(os.path.join(root, "*", "*", "BepInEx", "plugins"))
+                     + glob.glob(os.path.join(root, "*", "BepInEx", "plugins")))
+    if plugins:
+        community = "valheim" if "valheim" in plugins[0].lower() else os.path.basename(
+            os.path.dirname(os.path.dirname(os.path.dirname(plugins[0])))).lower()
+        return {"game": "bepinex", "dir": plugins[0], "community": community,
+                "label": f"{community.capitalize()} · BepInEx", "types": ".zip / .dll", "source": "Thunderstore"}
+    return None
+
+
+def installed_mods(target):
+    """[(nazwa do wyswietlenia, nazwa pliku/folderu)] w folderze modow."""
+    d = target["dir"]
+    if not os.path.isdir(d):
+        return []
+    out = []
+    for entry in sorted(os.listdir(d), key=str.lower):
+        path = os.path.join(d, entry)
+        if entry.startswith(".") or entry.endswith(".part"):
+            continue
+        if target["game"] == "minecraft":
+            if entry.endswith(".jar"):
+                out.append((entry[:-4], entry))
+            continue
+        label = entry
+        manifest = os.path.join(path, "manifest.json")
+        if os.path.isfile(manifest):
+            try:
+                m = json.load(open(manifest, encoding="utf-8-sig"))
+                label = f"{m.get('name', entry)} {m.get('version_number', '')}".strip()
+            except (OSError, ValueError):
+                pass
+        if os.path.isdir(path) or entry.endswith(".dll"):
+            out.append((label, entry))
+    return out
+
+
+def remove_mod(target, entry):
+    """Do kosza obok (.tg-trash), nie na zawsze - zly klik da sie odkrecic."""
+    src = os.path.join(target["dir"], entry)
+    if os.path.dirname(os.path.realpath(src)) != os.path.realpath(target["dir"]) or not os.path.exists(src):
+        raise ModError(entry)
+    trash = os.path.join(os.path.dirname(target["dir"]), ".tg-trash")
+    os.makedirs(trash, exist_ok=True)
+    shutil.move(src, os.path.join(trash, f"{datetime.now():%Y%m%d-%H%M%S}-{entry}"))
+
+
+def install_bepinex_zip(zpath, plugins_dir, package):
+    """
+    Paczka z Thunderstore: plugins/ -> BepInEx/plugins/<paczka>/, config/ -> BepInEx/config (bez nadpisywania
+    twoich ustawien), patchers/ -> BepInEx/patchers/<paczka>/, BepInEx/... -> wprost, reszta -> plugins/<paczka>/.
+    """
+    bepinex = os.path.dirname(plugins_dir)
+    game = os.path.dirname(bepinex)
+    with zipfile.ZipFile(zpath) as z:
+        for info in z.infolist():
+            parts = [p for p in info.filename.replace("\\", "/").split("/") if p]
+            if info.is_dir() or not parts or ".." in parts:
+                continue
+            head = parts[0].lower()
+            if len(parts) == 1 and head in ZIP_SKIP:
+                continue
+            if head == "bepinex":
+                dest = os.path.join(game, *parts)
+            elif head == "plugins":
+                dest = os.path.join(plugins_dir, package, *parts[1:])
+            elif head == "config":
+                dest = os.path.join(bepinex, "config", *parts[1:])
+                if os.path.exists(dest):
+                    continue  # twoja konfiguracja zostaje
+            elif head == "patchers":
+                dest = os.path.join(bepinex, "patchers", package, *parts[1:])
+            else:
+                dest = os.path.join(plugins_dir, package, *parts)
+            if not os.path.realpath(dest).startswith(os.path.realpath(game) + os.sep):
+                continue  # sciezka spoza gry w archiwum - pomijamy
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with z.open(info) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+
+
+def modrinth_search(query, target):
+    facets = [["project_type:mod"], [f"categories:{target['loader']}"], [f"versions:{target['version']}"]]
+    data = http_json(f"{MODRINTH_API}/search?query={urllib.parse.quote(query)}&limit=8"
+                     f"&facets={urllib.parse.quote(json.dumps(facets))}")
+    return [{"id": h["project_id"], "title": h.get("title") or h.get("slug"), "downloads": h.get("downloads", 0)}
+            for h in data.get("hits", [])]
+
+
+def modrinth_files(project, target, seen=None):
+    """Plik moda pod loader i wersje serwera + wymagane zaleznosci: [(nazwa pliku, url, tytul)]."""
+    seen = set() if seen is None else seen
+    seen.add(project)
+    query = (f"loaders={urllib.parse.quote(json.dumps([target['loader']]))}"
+             f"&game_versions={urllib.parse.quote(json.dumps([target['version']]))}")
+    versions = http_json(f"{MODRINTH_API}/project/{urllib.parse.quote(project)}/version?{query}")
+    if not versions:
+        raise ModError(t("mod_no_version", mod=project, target=target["label"]))
+    v = versions[0]
+    f = next((x for x in v.get("files", []) if x.get("primary")), (v.get("files") or [None])[0])
+    if not f:
+        raise ModError(t("mod_no_version", mod=project, target=target["label"]))
+    out = [(f["filename"], f["url"], v.get("name") or f["filename"])]
+    for dep in v.get("dependencies", []):
+        pid = dep.get("project_id")
+        if dep.get("dependency_type") == "required" and pid and pid not in seen:
+            out += modrinth_files(pid, target, seen)
+    return out
+
+
+def thunderstore_search(query, target):
+    data = http_json(f"{THUNDERSTORE}/api/cyberstorm/listing/{target['community']}/"
+                     f"?q={urllib.parse.quote(query)}&ordering=most-downloaded")
+    return [{"id": f"{p['namespace']}/{p['name']}", "title": f"{p['name']} ({p['namespace']})",
+             "downloads": p.get("download_count", 0)}
+            for p in data.get("results", [])[:8] if not p.get("is_deprecated")]
+
+
+def thunderstore_files(package, seen=None):
+    """Paczka Thunderstore (namespace/nazwa) + zaleznosci, bez BepInExPack (instaluje go AMP)."""
+    seen = set() if seen is None else seen
+    namespace, name = package.split("/", 1)
+    seen.add(f"{namespace}-{name}".lower())
+    data = http_json(f"{THUNDERSTORE}/api/experimental/package/{namespace}/{name}/")
+    latest = data["latest"]
+    out = [(f"{namespace}-{name}", latest["download_url"], f"{name} {latest.get('version_number', '')}".strip())]
+    for dep in latest.get("dependencies", []):
+        dep_ns, dep_name = (dep.split("-") + ["", ""])[:2]
+        if dep_name.lower().startswith("bepinexpack") or f"{dep_ns}-{dep_name}".lower() in seen:
+            continue
+        out += thunderstore_files(f"{dep_ns}/{dep_name}", seen)
+    return out
+
+
+def mod_from_text(text, target):
+    """Link albo nazwa -> ("pick", [wyniki]) albo ("id", identyfikator projektu/paczki)."""
+    text = text.strip()
+    if target["game"] == "minecraft":
+        m = re.search(r"modrinth\.com/(?:mod|plugin|datapack)/([\w.-]+)", text)
+        return ("id", m.group(1)) if m else ("pick", modrinth_search(text, target))
+    m = re.search(r"thunderstore\.io/(?:c/[\w-]+/)?(?:p|package)/([\w]+)/([\w]+)", text) \
+        or re.fullmatch(r"([A-Za-z0-9_]+)[-/]([A-Za-z0-9_]+)", text)
+    return ("id", f"{m.group(1)}/{m.group(2)}") if m else ("pick", thunderstore_search(text, target))
+
+
+def install_mod(target, mod_id):
+    """Instaluje mod z zaleznosciami; zwraca liste tytulow."""
+    done = []
+    if target["game"] == "minecraft":
+        for filename, url, title in modrinth_files(mod_id, target):
+            if os.path.basename(filename) != filename or not filename.endswith(".jar"):
+                continue
+            http_download(url, os.path.join(target["dir"], filename))
+            done.append(title)
+        return done
+    for package, url, title in thunderstore_files(mod_id):
+        zpath = os.path.join(os.path.dirname(target["dir"]), f".{package}.zip")
+        try:
+            http_download(url, zpath)
+            install_bepinex_zip(zpath, target["dir"], package)
+        finally:
+            if os.path.exists(zpath):
+                os.remove(zpath)
+        done.append(title)
+    return done
+
+
+def install_mod_file(target, filename, path):
+    """Plik od admina z Telegrama: .jar do mods/, .dll do plugins/<nazwa>/, .zip jak paczka Thunderstore."""
+    filename = os.path.basename(filename)
+    low = filename.lower()
+    if target["game"] == "minecraft" and low.endswith(".jar"):
+        shutil.move(path, os.path.join(target["dir"], filename))
+    elif target["game"] == "bepinex" and low.endswith(".dll"):
+        dest = os.path.join(target["dir"], filename[:-4], filename)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.move(path, dest)
+    elif target["game"] == "bepinex" and low.endswith(".zip"):
+        install_bepinex_zip(path, target["dir"], re.sub(r"[^\w.-]", "_", filename[:-4]))
+    else:
+        raise ModError(t("mod_bad_file", types=target["types"]))
+    return [filename]
+
+
 # ---------- Dota 2 (OpenDota) ----------
 
 DOTA_MEDALS = {1: "Herald", 2: "Guardian", 3: "Crusader", 4: "Archon", 5: "Legend", 6: "Ancient", 7: "Divine",
@@ -2319,6 +2609,8 @@ class Commands:
                 elif msg and msg.get("text", "").startswith("/") and time.time() - msg.get("date", 0) < 120:
                     self.awaiting.pop(str(msg["chat"]["id"]), None)  # nowa komenda przerywa czekanie na dane
                     self.handle(msg)
+                elif msg and msg.get("document") and str(msg["chat"]["id"]) in self.awaiting:
+                    self.handle_document(msg)
                 elif msg and msg.get("text") and str(msg["chat"]["id"]) in self.awaiting:
                     self.handle_text(msg)
             except Exception as e:
@@ -2535,7 +2827,8 @@ class Commands:
                 pass
             self.set_lang(chat, lang, announce=False)
         elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
-                                               "pws:", "pw!:", "ub:", "ub!:") + SETTINGS_KINDS):
+                                               "pws:", "pw!:", "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:")
+                                              + SETTINGS_KINDS):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
@@ -2677,6 +2970,9 @@ class Commands:
             send(t("con_confirm", lang, name=esc(wait["name"]), cmd=esc(text)), chat,
                  markup={"inline_keyboard": [[self.btn("btn_yes", f"con!:{wait['name']}", lang),
                                               self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
+        elif wait["kind"] == "mod":
+            text, markup = self.mod_text(msg, wait, lang)
+            send(text, chat, markup=markup)
         elif wait["kind"] == "unban":
             self.awaiting[str(chat)] = {"kind": "unban_ready", "name": wait["name"], "player": text}
             send(t("pl_confirm", lang, action=t("act_unban", lang), player=esc(text), name=esc(wait["name"])), chat,
@@ -2803,6 +3099,117 @@ class Commands:
             self.audit(user, chat, f"🔑 {wait['setting']}", rest)
             return self.server_view(rest, lang, note=t("pw_done", lang))
         return self.servers_view(lang)
+
+    # ---------- mody ----------
+
+    def mods_view(self, name, lang, note=""):
+        target = mod_target(name)
+        back = [self.btn("btn_back", f"srv:{name}", lang)]
+        if not target:
+            return t("mod_no_dir", lang), {"inline_keyboard": [back]}
+        mods = installed_mods(target)
+        self.cache[(str(self.chat_key), "mods", name)] = [entry for _, entry in mods]
+        lines = [t("mod_title", lang, name=esc(name), game=esc(target["label"]))]
+        if not mods:
+            lines.append(t("mod_empty", lang))
+        if note:
+            lines += ["", note]
+        rows = [[{"text": f"🗑 {label}"[:60], "callback_data": f"mdr:{i}:{name}"[:64]}]
+                for i, (label, _) in enumerate(mods[:40])]
+        rows += [[self.btn("btn_mod_add", f"mda:{name}", lang), self.btn("act_restart", f"do:restart:{name}", lang)],
+                 back]
+        return "\n".join(lines), {"inline_keyboard": rows}
+
+    def mods_callback(self, kind, rest, user, chat, lang):
+        self.chat_key = str(chat)
+        parts = rest.split(":")
+        name = parts[-1]
+        target = mod_target(name)
+        if kind == "md" or not target:
+            return self.mods_view(name, lang)
+        if kind == "mda":
+            self.awaiting[self.chat_key] = {"kind": "mod", "name": name}
+            return (t("mod_prompt", lang, types=target["types"], source=target["source"]),
+                    {"inline_keyboard": [[self.btn("btn_cancel", f"md:{name}", lang)]]})
+        idx = int(parts[0]) if parts[0].isdigit() else -1
+        if kind == "mdr":
+            entries = self.cache.get((self.chat_key, "mods", name)) or []
+            if not 0 <= idx < len(entries):
+                return self.mods_view(name, lang)
+            try:
+                remove_mod(target, entries[idx])
+            except (OSError, ModError) as e:
+                return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(e)))
+            self.audit(user, chat, f"🧩 🗑 {entries[idx]}", name)
+            return self.mods_view(name, lang, note=t("mod_removed", lang, mod=esc(entries[idx])) + "\n"
+                                  + t("mod_restart", lang))
+        results = self.cache.get((self.chat_key, "modsearch", name)) or []
+        if kind == "mdi" and 0 <= idx < len(results):
+            return self.mods_install(user, chat, name, target, results[idx]["id"], results[idx]["title"], lang)
+        return self.mods_view(name, lang)
+
+    def mods_install(self, user, chat, name, target, mod_id, title, lang):
+        send(t("mod_working", lang, mod=esc(title)), chat)
+        try:
+            done = install_mod(target, mod_id)
+        except Exception as e:  # siec, brak wersji, zly zip - pokazujemy, nic nie psujemy
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+        self.audit(user, chat, "🧩 + " + ", ".join(done), name)
+        return self.mods_view(name, lang, note=t("mod_installed", lang, list=esc(", ".join(done))) + "\n"
+                              + t("mod_restart", lang))
+
+    def mod_text(self, msg, wait, lang):
+        """Nazwa albo link po ➕ Dodaj mod: od razu instalacja albo lista do wyboru."""
+        chat, name = msg["chat"]["id"], wait["name"]
+        self.chat_key = str(chat)
+        target = mod_target(name)
+        if not target:
+            return self.mods_view(name, lang)
+        query = msg["text"].strip()
+        try:
+            kind, found = mod_from_text(query, target)
+        except Exception as e:
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+        if kind == "id":
+            return self.mods_install(msg.get("from", {}), chat, name, target, found, found, lang)
+        if not found:
+            return self.mods_view(name, lang, note=t("mod_nothing", lang, q=esc(query)))
+        self.cache[(self.chat_key, "modsearch", name)] = found
+        rows = [[{"text": f"{r['title']} · ⬇️{r['downloads']:,}".replace(",", " ")[:60],
+                  "callback_data": f"mdi:{i}:{name}"[:64]}] for i, r in enumerate(found)]
+        rows.append([self.btn("btn_back", f"md:{name}", lang)])
+        return t("mod_results", lang, q=esc(query)), {"inline_keyboard": rows}
+
+    def handle_document(self, msg):
+        """Plik moda wyslany po ➕ Dodaj mod (tylko admin, do 20 MB - limit Telegrama dla botow)."""
+        chat, user = msg["chat"]["id"], msg.get("from", {})
+        wait = self.awaiting.get(str(chat)) or {}
+        if user.get("id") not in ADMINS or wait.get("kind") != "mod" or (FRIENDS_TOKEN and self.friend_bot):
+            return
+        self.awaiting.pop(str(chat), None)
+        self.chat_key = str(chat)
+        lang, name, doc = lang_for(chat), wait["name"], msg["document"]
+        target = mod_target(name)
+        if not target:
+            return
+        tmp = os.path.join(os.path.dirname(target["dir"]), ".tg-upload")
+        try:
+            info = tg_api("getFile", {"file_id": doc["file_id"]}).get("result") or {}
+            url = f"https://api.telegram.org/file/bot{BOT['token'] or TOKEN}/{info['file_path']}"
+            http_download(url, tmp)
+            done = install_mod_file(target, doc.get("file_name") or "mod", tmp)
+        except Exception as e:  # nie logujemy URL-a (token)
+            text, markup = self.mods_view(name, lang, note=t("mod_error", lang, err=esc(
+                e if isinstance(e, ModError) else type(e).__name__)))
+            send(text, chat, markup=markup)
+            return
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        self.audit(user, chat, "🧩 + " + ", ".join(done), name)
+        text, markup = self.mods_view(name, lang, note=t("mod_installed", lang, list=esc(", ".join(done))) + "\n"
+                                      + t("mod_restart", lang))
+        send(text, chat, markup=markup)
 
     # ---------- ustawienia instancji ----------
 
@@ -2981,8 +3388,11 @@ class Commands:
             rows = [row("stop")]
         if inst["running"]:
             rows += [[self.btn("btn_settings", f"st:{name}", lang)]
-                     + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else []),
-                     row("off")]
+                     + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
+        if self.scope is None and mod_target(name):  # mody tylko dla admina
+            rows.append([self.btn("btn_mods", f"md:{name}", lang)])
+        if inst["running"]:
+            rows.append(row("off"))
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
         return "\n".join(lines), {"inline_keyboard": rows}
 
@@ -2996,6 +3406,8 @@ class Commands:
             return self.server_view(rest, lang)
         if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!", "ub", "ub!"):
             return self.tools_callback(data, user, chat, lang)
+        if kind in ("md", "mda", "mdr", "mdi"):
+            return self.mods_callback(kind, rest, user, chat, lang) if self.scope is None else self.servers_view(lang)
         if kind + ":" in SETTINGS_KINDS:
             return self.settings_callback(data, user, chat, lang)
         act, _, name = rest.partition(":")

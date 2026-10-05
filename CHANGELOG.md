@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.2.0 (2026-10)
+
+- **🧩 Mods, admin only** (friends never see them – a mod is code running on your machine). Minecraft: the loader (Forge, NeoForge, Fabric) and game version come from the server's libraries; type a name (Modrinth search, filtered to that loader and version) or paste a modrinth.com link - the right file and its required dependencies go to `mods/`. BepInEx games (Valheim): a name or a thunderstore.io link installs the package with its dependencies (BepInExPack is left to AMP) into `BepInEx/plugins/<package>/`, config files only when you don't have them yet. Or send the file (.jar, .zip, .dll; up to 20 MB). 🗑 moves a mod to `.tg-trash` next to the folder. After every change a 🔁 Restart button and a reminder that players usually need the same mods.
+
 ## 2.1.0 (2026-10)
 
 - **Instance vs game server.** ⏹ now stops only the game server (the AMP instance stays on, so you can update it); ⏻ turns the instance off or on separately. ▶️ on an instance that is off turns it on and then starts the game. The buttons follow the state: off, on with the game stopped, running.

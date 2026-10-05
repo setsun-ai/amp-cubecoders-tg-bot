@@ -988,3 +988,122 @@ def test_failed_start_shows_console(env, monkeypatch):
     clock[0] += 10
     w.poll()
     assert "❌" in edits[-1] and "konsoli" in edits[-1] and w.ops == {}
+
+
+
+@pytest.fixture
+def mod_instances(tmp_path, monkeypatch):
+    """Instancje jak na serwerze: Minecraft z Forge i Valheim z BepInEx."""
+    root = tmp_path / "amp"
+    (root / "Mc01" / "Minecraft" / "mods").mkdir(parents=True)
+    (root / "Mc01" / "Minecraft" / "libraries" / "net" / "minecraftforge" / "forge" / "1.20.1-47.2.0").mkdir(
+        parents=True)
+    (root / "Mc01" / "Minecraft" / "mods" / "jei-1.20.1.jar").write_bytes(b"jar")
+    plugins = root / "Valheim01" / "Valheim" / "896660" / "BepInEx" / "plugins"
+    plugins.mkdir(parents=True)
+    (root / "Terraria01" / "Plugins").mkdir(parents=True)
+    monkeypatch.setattr(bot, "INSTANCES_DIR", str(root))
+    return root, plugins
+
+
+def test_mod_targets(mod_instances):
+    root, plugins = mod_instances
+    mc = bot.mod_target("Mc01")
+    assert (mc["loader"], mc["version"], mc["dir"]) == ("forge", "1.20.1", str(root / "Mc01" / "Minecraft" / "mods"))
+    v = bot.mod_target("Valheim01")
+    assert v["dir"] == str(plugins) and v["community"] == "valheim"
+    assert bot.mod_target("Terraria01") is None
+    assert bot.installed_mods(mc) == [("jei-1.20.1", "jei-1.20.1.jar")]
+
+
+def test_bepinex_zip_layout(mod_instances, tmp_path):
+    _, plugins = mod_instances
+    bepinex = plugins.parent
+    (bepinex / "config").mkdir()
+    (bepinex / "config" / "mine.cfg").write_text("my settings")
+    z = tmp_path / "pkg.zip"
+    import zipfile
+    with zipfile.ZipFile(z, "w") as f:
+        f.writestr("manifest.json", '{"name": "EpicLoot", "version_number": "0.14.13"}')
+        f.writestr("icon.png", "x")
+        f.writestr("plugins/EpicLoot.dll", "dll")
+        f.writestr("config/mine.cfg", "theirs")
+        f.writestr("config/new.cfg", "new")
+        f.writestr("../evil.txt", "no")
+    bot.install_bepinex_zip(str(z), str(plugins), "RandyKnapp-EpicLoot")
+    assert (plugins / "RandyKnapp-EpicLoot" / "EpicLoot.dll").read_text() == "dll"
+    assert (bepinex / "config" / "mine.cfg").read_text() == "my settings"  # twoja konfiguracja zostaje
+    assert (bepinex / "config" / "new.cfg").exists() and not (plugins / "RandyKnapp-EpicLoot" / "icon.png").exists()
+    assert not (bepinex.parent.parent / "evil.txt").exists()
+    assert bot.installed_mods(bot.mod_target("Valheim01")) == [("EpicLoot 0.14.13", "RandyKnapp-EpicLoot")]
+
+
+def test_mod_sources_with_dependencies(monkeypatch, mod_instances):
+    api = {
+        "/project/jei/version": [{"name": "JEI 15", "files": [{"filename": "jei.jar", "url": "u1", "primary": True}],
+                                  "dependencies": [{"project_id": "lib", "dependency_type": "required"},
+                                                   {"project_id": "opt", "dependency_type": "optional"}]}],
+        "/project/lib/version": [{"name": "Lib", "files": [{"filename": "lib.jar", "url": "u2", "primary": True}],
+                                  "dependencies": []}],
+        "/package/RandyKnapp/EpicLoot/": {"latest": {"download_url": "z1", "version_number": "0.14",
+                                                     "dependencies": ["denikson-BepInExPack_Valheim-5.4",
+                                                                      "ValheimModding-Jotunn-2.30"]}},
+        "/package/ValheimModding/Jotunn/": {"latest": {"download_url": "z2", "version_number": "2.30",
+                                                       "dependencies": ["denikson-BepInExPack_Valheim-5.4"]}},
+    }
+
+    def fake(url, timeout=30):
+        key = next(k for k in api if k in url)
+        if "version" in key:
+            assert "forge" in url and "1.20.1" in url  # pod loader i wersje serwera
+        return api[key]
+
+    monkeypatch.setattr(bot, "http_json", fake)
+    target = bot.mod_target("Mc01")
+    assert bot.modrinth_files("jei", target) == [("jei.jar", "u1", "JEI 15"), ("lib.jar", "u2", "Lib")]
+    assert [p for p, _, _ in bot.thunderstore_files("RandyKnapp/EpicLoot")] == [
+        "RandyKnapp-EpicLoot", "ValheimModding-Jotunn"]  # bez BepInExPack - instaluje go AMP
+    assert bot.mod_from_text("https://thunderstore.io/c/valheim/p/RandyKnapp/EpicLoot/", bot.mod_target(
+        "Valheim01")) == ("id", "RandyKnapp/EpicLoot")
+    assert bot.mod_from_text("https://modrinth.com/mod/jei", target) == ("id", "jei")
+
+
+def test_mods_admin_only_with_upload_and_bin(env, mod_instances, monkeypatch):
+    root, _ = mod_instances
+    edits, sent_to = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "tg_api", lambda method, params=None, timeout=10, token=None: {
+        "result": {"file_path": "documents/f.jar"}} if method == "getFile" else {})
+    monkeypatch.setattr(bot, "http_download", lambda url, dest: open(dest, "wb").write(b"newjar"))
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+    admin = {"id": 1, "first_name": "Admin"}
+    friend = {"id": 42, "first_name": "Kumpel"}
+    bot.friend_set(env.db, 42, "Kumpel", ["Mc01"])
+
+    def click(data, user=admin):
+        c.handle_callback({"id": "q", "from": user, "data": data, "message": {"chat": {"id": user["id"]},
+                                                                              "message_id": 7}})
+        return edits[-1]
+
+    assert "md:Mc01" in str(click("srv:Mc01")[1])
+    n = len(edits)
+    assert "md:Mc01" not in str(click("srv:Mc01", friend)[1])  # znajomy nie widzi modow...
+    click("md:Mc01", friend)
+    click("mda:Mc01", friend)
+    assert len(edits) == n + 1  # ...i nie wejdzie w nie przyciskiem
+
+    text, markup = click("md:Mc01")
+    assert "Minecraft 1.20.1 · forge" in text and "jei-1.20.1" in str(markup)
+    click("mda:Mc01")
+    c.handle_document({"chat": {"id": 1}, "from": admin, "document": {"file_id": "F", "file_name": "create.jar"}})
+    assert (root / "Mc01" / "Minecraft" / "mods" / "create.jar").read_bytes() == b"newjar"
+    assert "create.jar" in sent_to[-1][1] and "🔁" in sent_to[-1][1]
+
+    text, markup = click("md:Mc01")
+    idx = next(i for i, row in enumerate(markup["inline_keyboard"]) if "jei" in row[0]["text"])
+    click(f"mdr:{idx}:Mc01")
+    assert not (root / "Mc01" / "Minecraft" / "mods" / "jei-1.20.1.jar").exists()
+    assert len(list((root / "Mc01" / "Minecraft" / ".tg-trash").iterdir())) == 1  # do kosza, nie na zawsze
