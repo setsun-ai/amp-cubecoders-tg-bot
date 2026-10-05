@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.9.0"
+VERSION = "2.0.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -55,6 +55,8 @@ load_env_file()
 INSTANCES_DIR = os.environ.get("AMP_INSTANCES", "/home/amp/.ampdata/instances")
 DB_PATH = os.environ.get("DB_PATH", "/var/lib/amp-tg-bot/players.db")
 TOKEN = os.environ.get("TG_TOKEN", "")
+# osobny bot dla znajomych (ten sam proces i baza); pusto = znajomi korzystaja z glownego bota
+FRIENDS_TOKEN = os.environ.get("TG_FRIENDS_TOKEN", "")
 CHAT_ID = os.environ.get("TG_CHAT_ID", "")
 # kto moze uzywac komend; domyslnie wlasciciel prywatnego czatu z TG_CHAT_ID
 ADMINS = {int(x) for x in re.findall(r"-?\d+", os.environ.get("TG_ADMINS", "")) if int(x) > 0}
@@ -80,7 +82,8 @@ AMP_TASK_IGNORE = re.compile(os.environ.get("AMP_TASK_IGNORE", r"remote sources|
 UPDATES_CHECK_HOURS = float(os.environ.get("UPDATES_CHECK_HOURS", "6"))  # 0 = bez sprawdzania aktualizacji
 IMPORTANT_PACKAGES = ("tailscale", "playit", "webmin", "ampinstmgr", "openssh", "openssl", "linux-image", "sudo")
 # Dota 2 przez OpenDota (darmowe API bez klucza; ok. 2000 zapytan dziennie): co ile minut sprawdzac mecze
-DOTA_CHECK_MINUTES = float(os.environ.get("DOTA_CHECK_MINUTES", "10"))  # 0 = wylaczone
+DOTA_CHECK_MINUTES = float(os.environ.get("DOTA_CHECK_MINUTES", "60"))  # 0 = wylaczone
+DOTA_SLOW_HOURS = 24  # gracze bez publicznych meczow i ranga wszystkich: raz na dobe
 OPENDOTA_API = "https://api.opendota.com/api"
 STEAM64_BASE = 76561197960265728
 POLL_SECONDS = 2
@@ -247,18 +250,22 @@ STRINGS = {
                  "👥 <b>Friends</b> – tap a person to change their servers:",
                  "👥 <b>Друзья</b> – нажми на человека, чтобы изменить его серверы:",
                  "👥 <b>Друзі</b> – натисни на людину, щоб змінити її сервери:"),
-    "fr_none": ("Nikt jeszcze nie ma dostępu. Znajomy pisze do bota /start, a ty dostajesz prośbę z przyciskiem.",
-                "Nobody has access yet. A friend sends /start to the bot and you get a request with a button.",
-                "Пока ни у кого нет доступа. Друг пишет боту /start, а ты получаешь запрос с кнопкой.",
-                "Поки ні в кого немає доступу. Друг пише боту /start, а ти отримуєш запит із кнопкою."),
+    "fr_none": ("Nikt jeszcze nie ma dostępu. Znajomy pisze /start do bota znajomych (albo do tego, jeśli osobnego "
+                "nie ma), a ty dostajesz prośbę z przyciskiem.",
+                "Nobody has access yet. A friend sends /start to the friends' bot (or to this one, if there's no "
+                "separate bot) and you get a request with a button.",
+                "Пока ни у кого нет доступа. Друг пишет /start боту для друзей (или этому, если отдельного нет), "
+                "а ты получаешь запрос с кнопкой.",
+                "Поки ні в кого немає доступу. Друг пише /start боту для друзів (або цьому, якщо окремого немає), "
+                "а ти отримуєш запит із кнопкою."),
     "fr_pick": ("👤 <b>{who}</b> – zaznacz serwery, którymi może zarządzać (start, stop, restart, aktualizacja, "
-                "kopia, gracze, konsola; bez haseł). Powiadomień o graczach nie dostaje.",
+                "kopia, gracze, ustawienia; bez konsoli, haseł i modów). Powiadomień o graczach nie dostaje.",
                 "👤 <b>{who}</b> – tick the servers they may manage (start, stop, restart, update, backup, players, "
-                "console; no passwords). They get no player alerts.",
+                "settings; no console, passwords or mods). They get no player alerts.",
                 "👤 <b>{who}</b> – отметь серверы, которыми он может управлять (запуск, стоп, перезапуск, обновление, "
-                "бэкап, игроки, консоль; без паролей). Уведомлений об игроках он не получает.",
+                "бэкап, игроки, настройки; без консоли, паролей и модов). Уведомлений об игроках он не получает.",
                 "👤 <b>{who}</b> – познач сервери, якими він може керувати (запуск, стоп, перезапуск, оновлення, "
-                "бекап, гравці, консоль; без паролів). Сповіщень про гравців не отримує."),
+                "бекап, гравці, налаштування; без консолі, паролів і модів). Сповіщень про гравців не отримує."),
     "btn_save": ("💾 Zapisz", "💾 Save", "💾 Сохранить", "💾 Зберегти"),
     "btn_remove": ("🗑 Usuń dostęp", "🗑 Remove access", "🗑 Убрать доступ", "🗑 Прибрати доступ"),
     "fr_saved": ("✅ {who}: {list}", "✅ {who}: {list}", "✅ {who}: {list}", "✅ {who}: {list}"),
@@ -399,6 +406,10 @@ STRINGS = {
     "dota_unranked": ("bez rangi", "unranked", "без ранга", "без рангу"),
     "dota_never": ("brak", "none", "нет", "немає"),
     "dota_ranked": ("rankingowy", "ranked", "рейтинговый", "рейтинговий"),
+    "dota_rank_up": ("📈 <b>{name}</b>: {old} → {new}", "📈 <b>{name}</b>: {old} → {new}",
+                     "📈 <b>{name}</b>: {old} → {new}", "📈 <b>{name}</b>: {old} → {new}"),
+    "dota_rank_down": ("📉 <b>{name}</b>: {old} → {new}", "📉 <b>{name}</b>: {old} → {new}",
+                       "📉 <b>{name}</b>: {old} → {new}", "📉 <b>{name}</b>: {old} → {new}"),
     "c_unban": ("Odbanuj gracza", "Unban a player", "Разбанить игрока", "Розбанити гравця"),
     "ub_prompt": ("♻️ <b>{name}</b>: napisz nick (albo SteamID) gracza do odbanowania.",
                   "♻️ <b>{name}</b>: type the nick (or SteamID) of the player to unban.",
@@ -583,15 +594,33 @@ def edit(chat_id, message_id, text, markup=None):
         log(f"editMessageText: {getattr(e, 'code', type(e).__name__)}")
 
 
-def tg_api(method, params=None, timeout=10):
+BOT = {"token": ""}  # bot, ktory wlasnie odpowiada ("" = glowny); patrz via()
+
+
+class via:
+    """`with via(FRIENDS_TOKEN):` - odpowiedzi (send/edit) ida przez bota znajomych."""
+
+    def __init__(self, token):
+        self.token, self.saved = token, None
+
+    def __enter__(self):
+        self.saved, BOT["token"] = BOT["token"], self.token
+
+    def __exit__(self, *exc):
+        BOT["token"] = self.saved
+
+
+def tg_api(method, params=None, timeout=10, token=None):
     data = urllib.parse.urlencode(params or {}).encode()
-    url = f"https://api.telegram.org/bot{TOKEN}/{method}"
+    url = f"https://api.telegram.org/bot{token or BOT['token'] or TOKEN}/{method}"
     with urllib.request.urlopen(url, data, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
 
 def send(text, chat_id=None, markup=None):
-    chat_id = chat_id or CHAT_ID
+    if chat_id is None:  # powiadomienia do admina zawsze glownym botem
+        with via(""):
+            return send(text, CHAT_ID, markup)
     if not TOKEN or not chat_id:
         log("[brak TG_TOKEN/TG_CHAT_ID] " + text)
         return
@@ -601,9 +630,10 @@ def send(text, chat_id=None, markup=None):
               "disable_web_page_preview": "true"}
     if markup:
         params["reply_markup"] = json.dumps(markup)
+    token = BOT["token"] or TOKEN  # bot, ktory wlasnie odpowiada (do admina: glowny, patrz wyzej)
     for attempt in range(3):
         try:
-            return (tg_api("sendMessage", params).get("result") or {}).get("message_id")
+            return (tg_api("sendMessage", params, token=token).get("result") or {}).get("message_id")
         except Exception as e:  # nie logujemy URL-a, bo zawiera token
             log(f"Blad Telegrama ({getattr(e, 'code', type(e).__name__)}), proba {attempt + 1}/3")
             time.sleep(3 * (attempt + 1))
@@ -948,6 +978,11 @@ def open_db(readonly=False):
         CREATE TABLE IF NOT EXISTS friends(user_id INTEGER PRIMARY KEY, name TEXT, instances TEXT, added INTEGER);
         CREATE TABLE IF NOT EXISTS dota(account_id INTEGER PRIMARY KEY, name TEXT, last_match INTEGER, added INTEGER);
     """)
+    for column in ("rank_tier INTEGER", "rank_at INTEGER", "matches_at INTEGER", "public INTEGER"):
+        try:  # baza z 1.9.0: dopisujemy kolumny
+            db.execute(f"ALTER TABLE dota ADD COLUMN {column}")
+        except sqlite3.OperationalError:
+            pass
     # sesje niezamkniete przy poprzednim wylaczeniu bota
     db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
     db.commit()
@@ -1702,8 +1737,9 @@ DOTA_MODES = {1: "All Pick", 2: "Captains Mode", 3: "Random Draft", 4: "Single D
               22: "All Pick", 23: "Turbo"}
 
 
-def opendota(path):
-    req = urllib.request.Request(f"{OPENDOTA_API}/{path}", headers={"User-Agent": f"amp-tg-bot/{VERSION}"})
+def opendota(path, post=False):
+    req = urllib.request.Request(f"{OPENDOTA_API}/{path}", data=b"" if post else None,
+                                 headers={"User-Agent": f"amp-tg-bot/{VERSION}"})
     with urllib.request.urlopen(req, timeout=20) as r:
         return json.loads(r.read())
 
@@ -1765,27 +1801,54 @@ class DotaWatcher:
         return self.heroes
 
     def poll(self):
-        if not DOTA_CHECK_MINUTES or time.time() - self.last < DOTA_CHECK_MINUTES * 60:
+        """
+        Mecze co DOTA_CHECK_MINUTES (gracze bez publicznych meczow raz na dobe); ranga wszystkich raz na dobe -
+        z karty profilu, wiec dziala tez przy ukrytych meczach. Ok. 6 graczy = ok. 160 zapytan dziennie.
+        """
+        now = time.time()
+        if not DOTA_CHECK_MINUTES or now - self.last < DOTA_CHECK_MINUTES * 60:
             return
-        self.last = time.time()
-        for account, name, last in self.db.execute("SELECT account_id, name, last_match FROM dota").fetchall():
+        self.last = now
+        rows = self.db.execute("SELECT account_id, name, last_match, rank_tier, rank_at, matches_at, public "
+                               "FROM dota").fetchall()
+        for account, name, last, tier, rank_at, matches_at, public in rows:
+            if now - (rank_at or 0) >= DOTA_SLOW_HOURS * 3600:
+                self.check_rank(account, name, tier)
+            if public == 0 and now - (matches_at or 0) < DOTA_SLOW_HOURS * 3600:
+                continue
             try:
                 matches = opendota(f"players/{account}/recentMatches") or []
             except Exception as e:
                 log(f"OpenDota {account}: {e}")
                 continue
+            self.db.execute("UPDATE dota SET matches_at=?, public=? WHERE account_id=?",
+                            (int(now), 1 if matches else 0, account))
+            self.db.commit()
             new = sorted((m for m in matches if m.get("match_id", 0) > (last or 0)), key=lambda m: m["match_id"])
             if not new:
                 continue
-            try:
-                rank = dota_rank(opendota(f"players/{account}"))
-            except Exception:
-                rank = ""
+            row = self.db.execute("SELECT rank_tier FROM dota WHERE account_id=?", (account,)).fetchone()
+            rank = dota_rank({"rank_tier": row[0]}) if row and row[0] else ""
             heroes = self.hero_names()
             for m in new[-5:]:  # po dlugiej przerwie bota - tylko kilka ostatnich
                 send(dota_match_text(name, m, heroes, rank))
             self.db.execute("UPDATE dota SET last_match=? WHERE account_id=?", (new[-1]["match_id"], account))
             self.db.commit()
+
+    def check_rank(self, account, name, old):
+        """Ranga z OpenDota; prosba o odswiezenie profilu, zeby jutro byla swieza."""
+        try:
+            profile = opendota(f"players/{account}")
+            opendota(f"players/{account}/refresh", post=True)
+        except Exception as e:
+            log(f"OpenDota rank {account}: {e}")
+            return
+        tier = (profile or {}).get("rank_tier")
+        self.db.execute("UPDATE dota SET rank_tier=?, rank_at=? WHERE account_id=?", (tier, int(time.time()), account))
+        self.db.commit()
+        if old and tier and tier != old:
+            key = "dota_rank_up" if tier > old else "dota_rank_down"
+            send(t(key, name=esc(name), old=esc(dota_rank({"rank_tier": old})), new=esc(dota_rank(profile))))
 
 
 def amp_test():
@@ -1979,7 +2042,8 @@ def cmd_status(instances, lang=None):
 class Commands:
     def __init__(self, db, instances):
         self.db, self.instances = db, instances
-        self.offset = None
+        self.offsets = {}  # token bota ("" = glowny) -> offset getUpdates
+        self.friend_bot = False  # czy wlasnie obslugujemy bota znajomych
         self.restart = False
         self.amp = Amp()
         self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
@@ -1987,22 +2051,38 @@ class Commands:
         self.scope = None  # None = admin; zbior instancji = znajomy, ktorego wiadomosc wlasnie obslugujemy
         self.chat_key = ""  # czat, ktorego edytor ustawien wlasnie obslugujemy (klucz w self.cache)
 
-    def poll(self, timeout):
-        """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli)."""
-        if not TOKEN:
+    def poll(self, timeout, token=""):
+        """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli); token = bot znajomych."""
+        if not (token or TOKEN):
             time.sleep(timeout)
             return
         params = {"timeout": timeout, "allowed_updates": json.dumps(["message", "callback_query"])}
-        if self.offset is not None:
-            params["offset"] = self.offset
+        if self.offsets.get(token) is not None:
+            params["offset"] = self.offsets[token]
         try:
-            res = tg_api("getUpdates", params, timeout=timeout + 10)
+            res = tg_api("getUpdates", params, timeout=timeout + 10, token=token or TOKEN)
         except Exception as e:
-            log(f"getUpdates: {getattr(e, 'code', type(e).__name__)}")
+            log(f"getUpdates{' (znajomi)' if token else ''}: {getattr(e, 'code', type(e).__name__)}")
             time.sleep(timeout)
             return
-        for upd in res.get("result", []):
-            self.offset = upd["update_id"] + 1
+        with via(token):
+            self.friend_bot = bool(token)
+            try:
+                self.handle_updates(res.get("result", []), token)
+            finally:
+                self.friend_bot = False
+        if self.restart:
+            # potwierdzamy odebrane wiadomosci, zeby po restarcie /update nie wykonal sie drugi raz
+            try:
+                tg_api("getUpdates", {"offset": self.offsets.get(""), "timeout": 0}, token=TOKEN)
+            except Exception:
+                pass
+            log("Restart po aktualizacji")
+            sys.exit(0)  # systemd (Restart=always) uruchomi nowa wersje
+
+    def handle_updates(self, updates, token):
+        for upd in updates:
+            self.offsets[token] = upd["update_id"] + 1
             msg = upd.get("message")
             try:
                 if upd.get("callback_query"):
@@ -2017,14 +2097,6 @@ class Commands:
                 chat = (msg or upd.get("callback_query", {}).get("message", {})).get("chat", {}).get("id")
                 if chat:
                     send(t("error", lang_for(chat)), chat)
-        if self.restart:
-            # potwierdzamy odebrane wiadomosci, zeby po restarcie /update nie wykonal sie drugi raz
-            try:
-                tg_api("getUpdates", {"offset": self.offset, "timeout": 0})
-            except Exception:
-                pass
-            log("Restart po aktualizacji")
-            sys.exit(0)  # systemd (Restart=always) uruchomi nowa wersje
 
     @staticmethod
     def who(user):
@@ -2032,13 +2104,19 @@ class Commands:
         return who + (f" @{user['username']}" if user.get("username") else "")
 
     def reject(self, user, chat):
-        key = f"stranger:{user.get('id')}"
+        # dostep daje bot znajomych (albo glowny, gdy osobnego nie ma); glowny jest wtedy tylko admina
+        grants = self.friend_bot or not FRIENDS_TOKEN
+        key = f"{'stranger' if grants else 'outsider'}:{user.get('id')}"
         lang = norm_lang(user.get("language_code")) or "en"
         if meta_get(self.db, key):
             send(t("private", lang), chat)
             return
-        # admin dostaje prosbe tylko raz o kazdej osobie, z przyciskiem do nadania dostepu
+        # admin dostaje wiadomosc tylko raz o kazdej osobie; z przyciskiem, gdy to prosba o dostep
         meta_set(self.db, key, int(time.time()))
+        if not grants:
+            send(t("stranger", who=esc(self.who(user)), id=user.get("id")))
+            send(t("private", lang), chat)
+            return
         meta_set(self.db, f"who:{user.get('id')}", json.dumps({"name": self.who(user), "lang": lang}))
         send(t("stranger", who=esc(self.who(user)), id=user.get("id")),
              markup={"inline_keyboard": [[self.btn("btn_grant", f"fr:{user.get('id')}", None)]]})
@@ -2048,6 +2126,8 @@ class Commands:
         """None dla admina, zbior instancji dla znajomego, False dla obcego."""
         if user.get("id") in ADMINS:
             return None
+        if FRIENDS_TOKEN and not self.friend_bot:  # glowny bot jest tylko admina
+            return False
         friend = friend_get(self.db, user.get("id"))
         return set(friend["instances"]) if friend else False
 
@@ -2163,8 +2243,10 @@ class Commands:
             send(t("dota_not_found", lang, id=account), chat)
             return
         last = max((m.get("match_id", 0) for m in matches), default=0)  # stare mecze nie wpadna jako nowe
-        self.db.execute("INSERT OR REPLACE INTO dota(account_id, name, last_match, added) VALUES (?,?,?,?)",
-                        (account, name, last, int(time.time())))
+        now = int(time.time())
+        self.db.execute("INSERT OR REPLACE INTO dota(account_id, name, last_match, added, rank_tier, rank_at, "
+                        "matches_at, public) VALUES (?,?,?,?,?,?,?,?)",
+                        (account, name, last, now, profile.get("rank_tier"), now, now, 1 if matches else 0))
         self.db.commit()
         when = ts(max(m.get("start_time", 0) for m in matches)) if matches else t("dota_never", lang)
         send(t("dota_added", lang, name=esc(name), rank=esc(dota_rank(profile, lang)), last=when), chat)
@@ -2223,7 +2305,7 @@ class Commands:
         if data.startswith("lang:") or data == "srv":
             return True
         kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!", "ub", "ub!") + tuple(
+        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "ub", "ub!") + tuple(
                 k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
@@ -2288,8 +2370,9 @@ class Commands:
                 who = json.loads(meta_get(self.db, f"who:{uid}") or "{}")
                 meta_set(self.db, f"lang:{uid}", who.get("lang", "en"))
                 CHAT_LANGS[str(uid)] = norm_lang(who.get("lang")) or "en"
-            send(t("fr_granted", lang_for(uid), list=esc(labels)), uid)
-            set_menu(uid, FRIEND_COMMANDS)
+            with via(FRIENDS_TOKEN):  # znajomy pisze z botem znajomych (jesli jest)
+                send(t("fr_granted", lang_for(uid), list=esc(labels)), uid)
+                set_menu(uid, FRIEND_COMMANDS)
             self.cache.pop(("fr", uid), None)
             text, markup = self.friends_view(lang)
             return t("fr_saved", lang, who=esc(name), list=esc(labels)) + "\n\n" + text, markup
@@ -2298,11 +2381,12 @@ class Commands:
             friend_remove(self.db, uid)
             self.cache.pop(("fr", uid), None)
             if had:
-                send(t("fr_revoked", lang_for(uid)), uid)
-                try:
-                    tg_api("deleteMyCommands", {"scope": json.dumps({"type": "chat", "chat_id": uid})})
-                except Exception:
-                    pass
+                with via(FRIENDS_TOKEN):
+                    send(t("fr_revoked", lang_for(uid)), uid)
+                    try:
+                        tg_api("deleteMyCommands", {"scope": json.dumps({"type": "chat", "chat_id": uid})})
+                    except Exception:
+                        pass
             text, markup = self.friends_view(lang)
             return t("fr_removed", lang, who=esc(name)) + "\n\n" + text, markup
         return self.friends_view(lang)
@@ -2342,7 +2426,7 @@ class Commands:
         self.scope = self.friend_scope(user)
         wait = self.awaiting.get(str(chat), {})
         if self.scope is False or (self.scope is not None and (
-                wait.get("kind") not in ("console", "setting", "setting_search", "unban")
+                wait.get("kind") not in ("setting", "setting_search", "unban")
                 or wait.get("name") not in self.scope)):
             return
         lang = lang_for(chat)
@@ -2646,7 +2730,8 @@ class Commands:
         if inst["running"]:
             rows += [[self.btn("act_update", f"do:update:{name}", lang),
                       self.btn("act_backup", f"do:backup:{name}", lang)],
-                     [self.btn("btn_players", f"pl:{name}", lang), self.btn("btn_console", f"con:{name}", lang)],
+                     [self.btn("btn_players", f"pl:{name}", lang)]
+                     + ([self.btn("btn_console", f"con:{name}", lang)] if self.scope is None else []),
                      [self.btn("btn_settings", f"st:{name}", lang)]
                      + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
@@ -2761,8 +2846,9 @@ def run():
                      markup=NO_KEYBOARD)
                 for admin in ADMINS:
                     set_menu(admin)
-                for uid, _name, _insts in friends_all(db):
-                    set_menu(uid, FRIEND_COMMANDS)
+                with via(FRIENDS_TOKEN):
+                    for uid, _name, _insts in friends_all(db):
+                        set_menu(uid, FRIEND_COMMANDS)
             startup = False
             last_scan = now
         for inst in instances.values():
@@ -2792,7 +2878,11 @@ def run():
             dota.poll()
         except Exception as e:
             log(f"Dota: {e}")
-        commands.poll(POLL_SECONDS)
+        if FRIENDS_TOKEN:  # dwa boty na zmiane, kazdy krotko
+            commands.poll(1)
+            commands.poll(1, FRIENDS_TOKEN)
+        else:
+            commands.poll(POLL_SECONDS)
 
 
 # ---------- komendy reczne ----------

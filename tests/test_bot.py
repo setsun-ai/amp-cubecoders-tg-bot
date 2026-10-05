@@ -3,6 +3,8 @@ import pytest
 
 import bot
 
+REAL_SEND = bot.send  # przed podmiana w fixture env
+
 VALHEIM_KVP = [
     "App.DisplayName=Valheim",
     r"Console.UserJoinRegex=^(?:\[[\d\/]+ [\d:]+\] )?Got character ZDOID from (?<username>.+?) : "
@@ -593,10 +595,11 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
     assert any(p == "ADSModule/StopInstance" for p, _ in c.amp.calls)
     assert any(chat is None and "Kumpel" in msg for chat, msg, _ in sent_to)  # admin widzi, co zrobil
 
-    click("con:Valheim01", friend)
-    c.handle_text({"chat": {"id": 42}, "from": friend, "text": "say hej", "message_id": 5})
+    assert "con:Valheim01" not in str(click("srv:Valheim01", friend)[1])  # konsola tylko dla admina
+    c.awaiting["42"] = {"kind": "console", "name": "Valheim01"}
+    c.handle_text({"chat": {"id": 42}, "from": friend, "text": "op Kumpel", "message_id": 5})
     click("con!:Valheim01", friend)
-    assert [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")][-1] == "say hej"
+    assert not [p for p, _ in c.amp.calls if p.endswith("SendConsoleMessage")]
 
     click("fr:42", admin)
     click("frd:42", admin)
@@ -810,3 +813,74 @@ def test_dota_watch(env, monkeypatch):
     w.last = 0
     w.poll()
     assert len(env.sent) == 1  # bez powtorki
+
+
+
+def test_separate_friends_bot(env, monkeypatch):
+    """Z TG_FRIENDS_TOKEN glowny bot jest tylko admina, a znajomi pisza do drugiego bota."""
+    api_calls, edits = [], []
+    monkeypatch.setattr(bot, "FRIENDS_TOKEN", "FRIENDS")
+    monkeypatch.setattr(bot, "TOKEN", "MAIN")
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    monkeypatch.setattr(bot, "send", REAL_SEND)
+    monkeypatch.setattr(bot, "tg_api", lambda method, params=None, timeout=10, token=None: api_calls.append(
+        (method, (params or {}).get("chat_id"), token or bot.BOT["token"] or bot.TOKEN, (params or {}).get("text", "")))
+        or {"result": {"message_id": 1}})
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+    friend = {"id": 42, "first_name": "Kumpel", "language_code": "pl"}
+    admin = {"id": 1, "first_name": "Admin"}
+
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})  # do glownego bota: nic
+    sent = [(chat, token, text) for m, chat, token, text in api_calls if m == "sendMessage"]
+    assert ("➕" not in str(api_calls)) and any(chat == 42 and token == "MAIN" and "prywatny" in text
+                                                for chat, token, text in sent)
+
+    api_calls.clear()
+    with bot.via("FRIENDS"):
+        c.friend_bot = True
+        c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})  # do bota znajomych: prosba
+        c.friend_bot = False
+    sent = [(chat, token, text) for m, chat, token, text in api_calls if m == "sendMessage"]
+    assert any(chat == "1" and token == "MAIN" for chat, token, _ in sent)  # prosba do admina glownym botem
+    assert any(chat == 42 and token == "FRIENDS" for chat, token, _ in sent)  # odpowiedz botem znajomych
+
+    api_calls.clear()
+    c.handle_callback({"id": "q", "from": admin, "data": "fr:42", "message": {"chat": {"id": 1}, "message_id": 7}})
+    c.handle_callback({"id": "q", "from": admin, "data": "frt:42:1", "message": {"chat": {"id": 1}, "message_id": 7}})
+    c.handle_callback({"id": "q", "from": admin, "data": "frs:42", "message": {"chat": {"id": 1}, "message_id": 7}})
+    granted = [(chat, token) for m, chat, token, text in api_calls if m == "sendMessage" and "/servers" in text]
+    assert granted == [(42, "FRIENDS")]  # wiadomosc o dostepie przychodzi od bota znajomych
+    assert any(m == "setMyCommands" and token == "FRIENDS" for m, _, token, _ in api_calls)
+
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/servers"})  # glowny bot dalej nie jego
+    assert not any("Valheim" in text for m, chat, token, text in api_calls if token == "MAIN" and chat == 42)
+
+
+def test_dota_rank_daily_and_private_players(env, monkeypatch):
+    clock = [1_000_000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    calls = []
+    api = {"players/5": {"profile": {"personaname": "Hidden"}, "rank_tier": 44}, "players/5/recentMatches": [],
+           "players/5/refresh": {}}
+
+    def fake(path, post=False):
+        calls.append(path)
+        return api[path]
+
+    monkeypatch.setattr(bot, "opendota", fake)
+    c = bot.Commands(env.db, env.inst)
+    c.handle({"chat": {"id": 1}, "from": {"id": 1}, "text": "/dota add 5"})
+    w = bot.DotaWatcher(env.db)
+    calls.clear()
+    clock[0] += 3600
+    w.poll()
+    assert calls == []  # bez publicznych meczow i ranga sprawdzona przy dodaniu: nic przez dobe
+    api["players/5"] = {"profile": {"personaname": "Hidden"}, "rank_tier": 45}
+    env.sent.clear()
+    clock[0] += 86400
+    w.poll()
+    assert "players/5/refresh" in calls and "players/5/recentMatches" in calls
+    assert env.sent == ["📈 <b>Hidden</b>: Archon 4 → Archon 5"]

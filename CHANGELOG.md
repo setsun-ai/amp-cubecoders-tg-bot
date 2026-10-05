@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.0 (2026-10)
+
+- **A separate bot for friends** (`TG_FRIENDS_TOKEN`): one process, one database, two Telegram bots. Friends write to theirs (requests still reach you with ➕, every action is reported to you), and the main bot answers only the admin. Without the token everything works as before.
+- **Friends no longer get the console** (a console command can do anything, e.g. give operator rights). They keep start, stop, restart, game update, backup, players (kick/ban/unban) and settings.
+- **Dota:** matches every hour by default; players without public match data once a day; the rank of every player once a day (OpenDota reads it from the profile card, so it works with hidden matches too) with 📈/📉 on a change.
+
 ## 1.9.0 (2026-10)
 
 - **Dota 2 matches** (`/dota`): watch players through the free OpenDota API (no key). `/dota add ID` takes the Friend ID, a SteamID64 or an OpenDota/Dotabuff/Steam profile link, checks the player and warns when *Expose Public Match Data* looks off. After each new match: one message with win/loss, hero, KDA, GPM/XPM, duration, mode (ranked marked) and rank. `/dota` lists the players with 🗑. Every 10 min (`DOTA_CHECK_MINUTES`; `0` turns it off).
