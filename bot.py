@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -344,6 +344,25 @@ STRINGS = {
     "act_backup": ("💾 Backup", "💾 Backup", "💾 Бэкап", "💾 Бекап"),
     "act_kick": ("👢 Kick", "👢 Kick", "👢 Кик", "👢 Кік"),
     "act_ban": ("🚫 Ban", "🚫 Ban", "🚫 Бан", "🚫 Бан"),
+    "act_unban": ("♻️ Unban", "♻️ Unban", "♻️ Разбан", "♻️ Розбан"),
+    "c_unban": ("Odbanuj gracza", "Unban a player", "Разбанить игрока", "Розбанити гравця"),
+    "ub_prompt": ("♻️ <b>{name}</b>: napisz nick (albo SteamID) gracza do odbanowania.",
+                  "♻️ <b>{name}</b>: type the nick (or SteamID) of the player to unban.",
+                  "♻️ <b>{name}</b>: напиши ник (или SteamID) игрока для разбана.",
+                  "♻️ <b>{name}</b>: напиши нік (або SteamID) гравця для розбану."),
+    "ub_usage": ("Użycie: /unban NICK – potem wybierzesz serwer.", "Usage: /unban NICK – then pick the server.",
+                 "Использование: /unban НИК – потом выберешь сервер.",
+                 "Використання: /unban НІК – потім обереш сервер."),
+    "ub_pick": ("♻️ Odbanować <b>{player}</b>? Wybierz serwer:", "♻️ Unban <b>{player}</b>? Pick the server:",
+                "♻️ Разбанить <b>{player}</b>? Выбери сервер:", "♻️ Розбанити <b>{player}</b>? Обери сервер:"),
+    "upd_held": ("⏸ Wstrzymane przez Ubuntu (phased / kept back) – apt upgrade ich jeszcze nie zainstaluje: {list}",
+                 "⏸ Held back by Ubuntu (phased / kept back) – apt upgrade won't install them yet: {list}",
+                 "⏸ Задержаны Ubuntu (phased / kept back) – apt upgrade их пока не установит: {list}",
+                 "⏸ Затримані Ubuntu (phased / kept back) – apt upgrade їх поки не встановить: {list}"),
+    "upd_stale": ("⚠️ Nie udało się odświeżyć listy pakietów – dane apt z {date}.",
+                  "⚠️ Couldn't refresh the package lists – apt data from {date}.",
+                  "⚠️ Не удалось обновить списки пакетов – данные apt от {date}.",
+                  "⚠️ Не вдалося оновити списки пакетів – дані apt від {date}."),
     "btn_players": ("👥 Gracze", "👥 Players", "👥 Игроки", "👥 Гравці"),
     "btn_console": ("⌨️ Konsola", "⌨️ Console", "⌨️ Консоль", "⌨️ Консоль"),
     "btn_password": ("🔑 Hasło", "🔑 Password", "🔑 Пароль", "🔑 Пароль"),
@@ -1332,8 +1351,9 @@ class Amp:
         return found
 
     ACTIONS = ("start", "stop", "restart", "update", "backup")
-    # komendy konsoli dla kick/ban; {player} = nick
-    GAME_COMMANDS = {"default": {"kick": "kick {player}", "ban": "ban {player}"}}
+    # komendy konsoli dla kick/ban/unban; {player} = nick; klucz = fragment nazwy modulu AMP
+    GAME_COMMANDS = {"default": {"kick": "kick {player}", "ban": "ban {player}", "unban": "unban {player}"},
+                     "minecraft": {"kick": "kick {player}", "ban": "ban {player}", "unban": "pardon {player}"}}
 
     def action(self, act, name):
         """
@@ -1359,7 +1379,9 @@ class Amp:
                                   Description="amp-tg-bot", Sticky=False)
 
     def player_action(self, act, name, player):
-        commands = self.GAME_COMMANDS.get(self.find(name)["module"], self.GAME_COMMANDS["default"])
+        module = (self.find(name)["module"] or "").lower()
+        commands = next((c for key, c in self.GAME_COMMANDS.items() if key != "default" and key in module),
+                        self.GAME_COMMANDS["default"])
         return self.console(name, commands[act].format(player=player))
 
 
@@ -1462,14 +1484,67 @@ class AmpWatcher:
             log(f"AMP watcher: {e}")
 
 
-def apt_upgradable():
-    """Pakiety do aktualizacji wedlug apt: [{"name", "new", "old", "security"}] (bez roota)."""
+APT_DIR = os.path.join(os.path.dirname(DB_PATH), "apt")
+APT_STALE = {}  # data systemowej listy pakietow, gdy wlasnej nie udalo sie odswiezyc (do raportu)
+
+
+def apt_options():
+    """Wlasne listy pakietow bota: odswiezane bez roota, system ich nie widzi i nie blokuje."""
+    return ["-o", f"Dir::State::Lists={APT_DIR}/lists", "-o", f"Dir::Cache={APT_DIR}/cache",
+            "-o", "Debug::NoLocking=1"]
+
+
+def apt_run(args, timeout=120):
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout, env={**os.environ, "LANG": "C"})
+
+
+def apt_refresh():
+    """apt-get update do katalogu bota (bot nie jest rootem). True, gdy listy sa swieze."""
     try:
-        out = subprocess.run(["apt", "list", "--upgradable"], capture_output=True, text=True, timeout=120,
-                             env={**os.environ, "LANG": "C"}).stdout
+        os.makedirs(f"{APT_DIR}/lists/partial", exist_ok=True)
+        os.makedirs(f"{APT_DIR}/cache/archives/partial", exist_ok=True)
+        return apt_run(["apt-get", "update", "-qq", *apt_options()], timeout=600).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def system_lists_date():
+    stamps = [os.path.getmtime(p) for p in glob.glob("/var/lib/apt/lists/*Release")]
+    return ts(max(stamps)) if stamps else "?"
+
+
+def parse_held(text):
+    """`apt-get -s upgrade`: pakiety "kept back" i odlozone przez phased updates."""
+    held, take = set(), False
+    for line in text.splitlines():
+        if line.startswith("The following"):
+            take = "kept back" in line or "phasing" in line
+        elif take and line.startswith("  "):
+            held.update(line.split())
+        else:
+            take = False
+    return held
+
+
+def apt_upgradable(refresh=True):
+    """
+    Pakiety do aktualizacji: [{"name", "new", "old", "security", "held"}]. Najpierw swieze listy (inaczej
+    stary cache mowi "aktualny", a Webmin po swoim apt update pokazuje cos innego), potem `held` = te,
+    ktorych Ubuntu jeszcze nie da zainstalowac (phased updates / kept back).
+    """
+    fresh = apt_refresh() if refresh else False
+    opts = apt_options() if fresh else []
+    APT_STALE.clear()
+    if refresh and not fresh:
+        APT_STALE["date"] = system_lists_date()
+    try:
+        pkgs = parse_apt(apt_run(["apt", "list", "--upgradable", *opts]).stdout)
+        held = parse_held(apt_run(["apt-get", "-s", "upgrade", *opts]).stdout)
     except (OSError, subprocess.SubprocessError):
         return None
-    return parse_apt(out)
+    for p in pkgs:
+        p["held"] = p["name"] in held
+    return pkgs
 
 
 def parse_apt(text):
@@ -1478,7 +1553,7 @@ def parse_apt(text):
         m = re.match(r"^([^/\s]+)/(\S+)\s+(\S+)\s+\S+\s+\[upgradable from:\s*([^\]]+)\]", line)
         if m:
             pkgs.append({"name": m.group(1), "new": m.group(3), "old": m.group(4).strip(),
-                         "security": "-security" in m.group(2)})
+                         "security": "-security" in m.group(2), "held": False})
     return pkgs
 
 
@@ -1508,24 +1583,31 @@ def updates_report(amp, lang=None, pkgs=None, reboot=None, amp_info=None):
     reboot = reboot_required() if reboot is None else reboot
     amp_available, amp_version = amp_update_info(amp) if amp_info is None else amp_info
     lines = []
+    if APT_STALE.get("date"):
+        lines.append(t("upd_stale", lang, date=esc(APT_STALE["date"])))
+    ready = [p for p in pkgs or [] if not p.get("held")]
+    held = [p for p in pkgs or [] if p.get("held")]
     if pkgs is None:
         lines.append(t("upd_apt_unknown", lang))
-    elif pkgs:
-        security = [p for p in pkgs if p["security"]]
-        lines.append(t("upd_apt", lang, n=len(pkgs), sec=len(security)))
-        important = [p for p in pkgs if p["security"] or p["name"].startswith(IMPORTANT_PACKAGES)]
+    elif ready:
+        security = [p for p in ready if p["security"]]
+        lines.append(t("upd_apt", lang, n=len(ready), sec=len(security)))
+        important = [p for p in ready if p["security"] or p["name"].startswith(IMPORTANT_PACKAGES)]
         for p in important[:15]:
             mark = " 🛡" if p["security"] else ""
             lines.append(f"  • <code>{esc(p['name'])}</code> {esc(p['old'])} → {esc(p['new'])}{mark}")
-        if len(pkgs) > len(important[:15]):
-            lines.append(t("upd_more", lang, n=len(pkgs) - len(important[:15])))
+        if len(ready) > len(important[:15]):
+            lines.append(t("upd_more", lang, n=len(ready) - len(important[:15])))
     else:
         lines.append(t("upd_apt_none", lang))
+    if held:
+        lines.append(t("upd_held", lang, list=esc(", ".join(p["name"] for p in held[:10]))
+                       + (f" (+{len(held) - 10})" if len(held) > 10 else "")))
     if reboot is not None:
         lines.append(t("upd_reboot", lang, pkgs=esc(", ".join(reboot[:8]) or "?")))
     if amp_available:
         lines.append(t("upd_amp", lang, version=esc(amp_version or "?")))
-    if pkgs:
+    if ready:
         lines.append(t("upd_how", lang))
     return t("upd_title", lang) + "\n" + "\n".join(lines)
 
@@ -1546,8 +1628,8 @@ class UpdateMonitor:
         if pkgs is None:
             return
         # powiadomienie tylko o czyms nowym: bezpieczenstwo, restart, wazne pakiety, AMP
-        keys = sorted(f"{p['name']}={p['new']}" for p in pkgs
-                      if p["security"] or p["name"].startswith(IMPORTANT_PACKAGES))
+        keys = sorted(f"{p['name']}={p['new']}" for p in pkgs if not p.get("held")
+                      and (p["security"] or p["name"].startswith(IMPORTANT_PACKAGES)))
         signature = json.dumps([keys, reboot, amp_info[0] and amp_info[1]])
         if signature == meta_get(self.db, "updates_seen"):
             return
@@ -1598,10 +1680,10 @@ def amp_test():
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
 COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), ("status", ""), ("history", " [N]"),
-            ("player", " NICK"), ("week", ""), ("lang", ""), ("version", ""), ("update", ""), ("rollback", ""),
-            ("help", "")]
+            ("player", " NICK"), ("unban", " NICK"), ("week", ""), ("lang", ""), ("version", ""), ("update", ""),
+            ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
-FRIEND_COMMANDS = [("servers", ""), ("lang", ""), ("help", "")]
+FRIEND_COMMANDS = [("servers", ""), ("unban", " NICK"), ("lang", ""), ("help", "")]
 # przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
 # stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
 SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
@@ -1609,7 +1691,7 @@ SETTINGS_PAGE = 10
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
            "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang",
-           "znajomi": "friends"}
+           "znajomi": "friends", "odbanuj": "unban", "pardon": "unban"}
 # komendy sa tylko pod przyciskiem "Menu"; to chowa klawiature z przyciskami z wersji 1.0.0-1.1.0
 NO_KEYBOARD = {"remove_keyboard": True}
 LANG_BUTTONS = {"inline_keyboard": [[{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("pl", "en")],
@@ -1834,6 +1916,8 @@ class Commands:
             if cmd in ("servers", "serwery", "server"):
                 text, markup = self.servers_view(lang)
                 send(text, chat, markup=markup)
+            elif cmd == "unban":
+                self.unban_command(chat, args, lang)
             elif cmd == "lang":
                 self.lang_command(chat, args, lang)
             else:
@@ -1858,6 +1942,8 @@ class Commands:
         elif cmd == "friends":
             text, markup = self.friends_view(lang)
             send(text, chat, markup=markup)
+        elif cmd == "unban":
+            self.unban_command(chat, args, lang)
         elif cmd == "lang":
             self.lang_command(chat, args, lang)
         elif cmd == "version":
@@ -1872,6 +1958,28 @@ class Commands:
             self.rollback(chat, lang)
         else:
             send(help_text(lang), chat, markup=NO_KEYBOARD)
+
+    def unban_command(self, chat, args, lang):
+        """/unban NICK: wybor serwera jest zarazem potwierdzeniem."""
+        if not args:
+            send(t("ub_usage", lang), chat)
+            return
+        if not self.amp.configured:
+            send(t("amp_off", lang), chat)
+            return
+        player = " ".join(args)
+        try:
+            insts = [i for i in self.amp.instances() if self.scope is None or i["name"] in self.scope]
+        except Exception as e:
+            send(t("amp_error", lang, err=esc(e)), chat)
+            return
+        if not insts:
+            send(t("srv_none", lang), chat)
+            return
+        self.awaiting[str(chat)] = {"kind": "unban_ready", "player": player, "name": None}
+        rows = [[{"text": f"♻️ {i['friendly']}", "callback_data": f"ub!:{i['name']}"[:64]}] for i in insts]
+        send(t("ub_pick", lang, player=esc(player)), chat,
+             markup={"inline_keyboard": rows + [[self.btn("btn_cancel", "srv", lang)]]})
 
     def lang_command(self, chat, args, lang):
         if args and norm_lang(args[0]):
@@ -1905,7 +2013,7 @@ class Commands:
                 pass
             self.set_lang(chat, lang, announce=False)
         elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
-                                               "pws:", "pw!:") + SETTINGS_KINDS):
+                                               "pws:", "pw!:", "ub:", "ub!:") + SETTINGS_KINDS):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
@@ -1915,7 +2023,8 @@ class Commands:
         if data.startswith("lang:") or data == "srv":
             return True
         kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!") + tuple(k[:-1] for k in SETTINGS_KINDS):
+        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "con", "con!", "ub", "ub!") + tuple(
+                k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
 
@@ -2033,7 +2142,7 @@ class Commands:
         self.scope = self.friend_scope(user)
         wait = self.awaiting.get(str(chat), {})
         if self.scope is False or (self.scope is not None and (
-                wait.get("kind") not in ("console", "setting", "setting_search")
+                wait.get("kind") not in ("console", "setting", "setting_search", "unban")
                 or wait.get("name") not in self.scope)):
             return
         lang = lang_for(chat)
@@ -2044,6 +2153,11 @@ class Commands:
             send(t("con_confirm", lang, name=esc(wait["name"]), cmd=esc(text)), chat,
                  markup={"inline_keyboard": [[self.btn("btn_yes", f"con!:{wait['name']}", lang),
                                               self.btn("btn_cancel", f"srv:{wait['name']}", lang)]]})
+        elif wait["kind"] == "unban":
+            self.awaiting[str(chat)] = {"kind": "unban_ready", "name": wait["name"], "player": text}
+            send(t("pl_confirm", lang, action=t("act_unban", lang), player=esc(text), name=esc(wait["name"])), chat,
+                 markup={"inline_keyboard": [[self.btn("btn_yes", f"ub!:{wait['name']}", lang),
+                                              self.btn("btn_cancel", f"pl:{wait['name']}", lang)]]})
         elif wait["kind"] == "setting":
             text, markup = self.apply_setting(user, chat, wait["name"], wait["ci"], wait["si"],
                                               "" if text == "." else text, lang)
@@ -2076,12 +2190,13 @@ class Commands:
         except Exception as e:
             return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [back]}
         self.cache[(str(chat), "players", name)] = players
+        unban = [self.btn("act_unban", f"ub:{name}", lang)]
         if not players:
-            return t("pl_title", lang, name=esc(name)) + "\n" + t("pl_none", lang), {"inline_keyboard": [back]}
+            return t("pl_title", lang, name=esc(name)) + "\n" + t("pl_none", lang), {"inline_keyboard": [unban, back]}
         rows = [[{"text": f"👤 {p}", "callback_data": "noop"},
                  self.btn("act_kick", f"pa:kick:{i}:{name}", lang), self.btn("act_ban", f"pa:ban:{i}:{name}", lang)]
                 for i, p in enumerate(players[:20])]
-        return t("pl_title", lang, name=esc(name)), {"inline_keyboard": rows + [back]}
+        return t("pl_title", lang, name=esc(name)), {"inline_keyboard": rows + [unban, back]}
 
     def tools_callback(self, data, user, chat, lang):
         """Gracze (kick/ban), konsola i hasla; dane przycisku: <rodzaj>:...:<instancja>."""
@@ -2104,6 +2219,20 @@ class Commands:
                 return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
             self.audit(user, chat, f"{t('act_' + act)} {player}", name)
             return self.server_view(name, lang, note=self.console_note(out, lang))
+        if kind == "ub":
+            self.awaiting[str(chat)] = {"kind": "unban", "name": rest}
+            return t("ub_prompt", lang, name=esc(rest)), {"inline_keyboard": [[self.btn("btn_cancel",
+                                                                                         f"pl:{rest}", lang)]]}
+        if kind == "ub!":
+            wait = self.awaiting.pop(str(chat), None)
+            if not wait or wait.get("kind") != "unban_ready" or wait.get("name") not in (None, rest):
+                return self.server_view(rest, lang)
+            try:
+                out = self.amp.player_action("unban", rest, wait["player"])
+            except Exception as e:
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+            self.audit(user, chat, f"{t('act_unban')} {wait['player']}", rest)
+            return self.server_view(rest, lang, note=self.console_note(out, lang))
         if kind == "con":
             self.awaiting[str(chat)] = {"kind": "console", "name": rest}
             return t("con_prompt", lang, name=esc(rest)), {"inline_keyboard": [[self.btn("btn_cancel",
@@ -2331,7 +2460,7 @@ class Commands:
         kind, _, rest = data.partition(":")
         if kind == "srv":
             return self.server_view(rest, lang)
-        if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!"):
+        if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!", "ub", "ub!"):
             return self.tools_callback(data, user, chat, lang)
         if kind + ":" in SETTINGS_KINDS:
             return self.settings_callback(data, user, chat, lang)

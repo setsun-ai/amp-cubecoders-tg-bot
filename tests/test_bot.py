@@ -680,3 +680,87 @@ def test_settings_editor(env, monkeypatch):
     n = len(edits)
     click("st:Mc01", friend)  # cudzy serwer: nie
     assert len(edits) == n
+
+
+HELD = """Reading package lists... Done
+Calculating upgrade... Done
+The following upgrades have been deferred due to phasing:
+  tailscale
+The following packages have been kept back:
+  linux-image-generic linux-generic
+The following packages will be upgraded:
+  openssl vim
+"""
+
+
+def test_updates_fresh_lists_and_held_packages(env, monkeypatch, tmp_path):
+    calls = []
+
+    class Done:
+        def __init__(self, out="", code=0):
+            self.stdout, self.returncode = out, code
+
+    def fake_run(args, **kw):
+        calls.append(args)
+        if args[:2] == ["apt-get", "update"]:
+            return Done()
+        if args[:2] == ["apt", "list"]:
+            return Done(APT)
+        return Done(HELD)
+
+    monkeypatch.setattr(bot, "APT_DIR", str(tmp_path / "apt"))
+    monkeypatch.setattr(bot.subprocess, "run", fake_run)
+    pkgs = bot.apt_upgradable()
+    assert calls[0][:2] == ["apt-get", "update"] and f"Dir::State::Lists={tmp_path / 'apt'}/lists" in calls[0]
+    assert all(f"Dir::State::Lists={tmp_path / 'apt'}/lists" in c for c in calls)  # list i symulacja z tych list
+    assert [(p["name"], p["held"]) for p in pkgs] == [("openssl", False), ("tailscale", True), ("vim", False)]
+    text = bot.updates_report(FakeAmp(), "pl", pkgs=pkgs, reboot=None, amp_info=(False, None))
+    assert "Pakiety do aktualizacji: 2 (bezpieczeństwa: 1)" in text and "⏸" in text and "tailscale" in text
+    assert "⚠️" not in text
+
+    monkeypatch.setattr(bot, "apt_refresh", lambda: False)  # bez sieci: dane systemowe, z data
+    bot.apt_upgradable()
+    assert "⚠️" in bot.updates_report(FakeAmp(), "pl", pkgs=pkgs, reboot=None, amp_info=(False, None))
+
+
+def test_unban(env, monkeypatch):
+    edits, sent_to = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+    admin = {"id": 1, "first_name": "Admin"}
+
+    def click(data, user=admin):
+        c.handle_callback({"id": "q", "from": user, "data": data, "message": {"chat": {"id": user["id"]},
+                                                                              "message_id": 7}})
+        return edits[-1]
+
+    def console_sent():
+        return [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")]
+
+    text, markup = click("pl:Valheim01")
+    assert "ub:Valheim01" in str(markup)
+    click("ub:Valheim01")
+    c.handle_text({"chat": {"id": 1}, "from": admin, "text": "Griefer", "message_id": 3})
+    assert "Griefer" in sent_to[-1][1] and console_sent() == []  # najpierw potwierdzenie
+    click("ub!:Valheim01")
+    assert console_sent() == ["unban Griefer"]
+
+    c.amp.instances()  # Mc01 = Minecraft -> pardon
+    c.handle({"chat": {"id": 1}, "from": admin, "text": "/unban Steve"})
+    assert "ub!:Mc01" in str(sent_to[-1][2])
+    click("ub!:Mc01")
+    assert console_sent()[-1] == "pardon Steve"
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/unban Bob"})
+    assert "ub!:Valheim01" in str(sent_to[-1][2]) and "Mc01" not in str(sent_to[-1][2])  # tylko jego serwery
+    n = len(console_sent())
+    click("ub!:Mc01", friend)
+    assert len(console_sent()) == n

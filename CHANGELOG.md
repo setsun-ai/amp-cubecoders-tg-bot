@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.0 (2026-10)
+
+- **Unban:** `/unban NAME` (pick the server) or 👥 Players → ♻️ (type the name) - the game's own command, `pardon` in Minecraft, `unban` elsewhere; with a confirmation, for friends on their servers too.
+- **`/updates` no longer reports a stale state.** The bot refreshes the package lists itself before checking (`apt-get update` into its own folder next to the database - it runs without root), so it matches what Webmin shows after its refresh. Packages Ubuntu holds back (phased updates, kept back) are listed separately and don't count as "to install" or trigger alerts. If the refresh fails, the report says how old the system's lists are.
+
 ## 1.7.0 (2026-10)
 
 - **⚙️ Settings** of an instance from Telegram (`/servers` → a server): every setting AMP shows in its panel, in its groups, with search; lists as buttons (difficulty, game type such as Forge or Vanilla, version...), on/off switches, typed values (world name, message of the day...). After a version or type change the bot reminds you to run the game update. Passwords stay under 🔑 and AMP's own settings (ports, logins) are left out. Friends can use it on their servers; every change is reported to the admin as "old → new".
