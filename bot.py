@@ -34,7 +34,7 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
-VERSION = "2.0.1"
+VERSION = "2.1.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -348,8 +348,77 @@ STRINGS = {
     "btn_yes": ("✅ Tak", "✅ Yes", "✅ Да", "✅ Так"),
     "btn_back": ("↩️ Wróć", "↩️ Back", "↩️ Назад", "↩️ Назад"),
     "btn_refresh": ("🔄 Odśwież", "🔄 Refresh", "🔄 Обновить", "🔄 Оновити"),
-    "act_start": ("▶️ Start", "▶️ Start", "▶️ Запуск", "▶️ Запуск"),
-    "act_stop": ("⏹ Stop", "⏹ Stop", "⏹ Стоп", "⏹ Стоп"),
+    "act_start": ("▶️ Uruchom serwer", "▶️ Start server", "▶️ Запустить сервер", "▶️ Запустити сервер"),
+    "act_stop": ("⏹ Zatrzymaj serwer", "⏹ Stop server", "⏹ Остановить сервер", "⏹ Зупинити сервер"),
+    "act_on": ("⏻ Włącz instancję", "⏻ Turn instance on", "⏻ Включить инстанс", "⏻ Увімкнути інстанс"),
+    "act_off": ("⏻ Wyłącz instancję", "⏻ Turn instance off", "⏻ Выключить инстанс", "⏻ Вимкнути інстанс"),
+    "op_started": ("⏳ {action} – postęp pokażę w wiadomości poniżej.",
+                   "⏳ {action} – I'll show the progress in the message below.",
+                   "⏳ {action} – прогресс покажу в сообщении ниже.",
+                   "⏳ {action} – прогрес покажу в повідомленні нижче."),
+    "op_busy": ("⏳ Już trwa: {action}. Poczekaj, aż się skończy (wiadomość poniżej).",
+                "⏳ Already running: {action}. Wait until it ends (message below).",
+                "⏳ Уже выполняется: {action}. Подожди, пока закончится (сообщение ниже).",
+                "⏳ Вже виконується: {action}. Зачекай, доки закінчиться (повідомлення нижче)."),
+    "op_done": ("✅ Gotowe ({dur}).", "✅ Done ({dur}).", "✅ Готово ({dur}).", "✅ Готово ({dur})."),
+    "op_update_none": ("✅ Gotowe – AMP nie pokazał pobierania, gra była pewnie aktualna.",
+                       "✅ Done – AMP showed no download, the game was probably up to date.",
+                       "✅ Готово – AMP не показал загрузки, игра, наверное, была актуальной.",
+                       "✅ Готово – AMP не показав завантаження, гра, мабуть, була актуальна."),
+    "op_failed": ("❌ Nie udało się – AMP zgłasza błąd.", "❌ Failed – AMP reports an error.",
+                  "❌ Не получилось – AMP сообщает об ошибке.", "❌ Не вдалося – AMP повідомляє про помилку."),
+    "op_waiting": ("⚠️ AMP czeka na reakcję w panelu (np. komunikat do potwierdzenia) – otwórz panel AMP.",
+                   "⚠️ AMP is waiting for input in its panel (e.g. a message to confirm) – open the AMP panel.",
+                   "⚠️ AMP ждёт действия в панели (например, подтвердить сообщение) – открой панель AMP.",
+                   "⚠️ AMP чекає на дію в панелі (наприклад, підтвердити повідомлення) – відкрий панель AMP."),
+    "op_timeout": ("⚠️ Trwa to podejrzanie długo ({dur}) – sprawdź panel AMP.",
+                   "⚠️ This takes suspiciously long ({dur}) – check the AMP panel.",
+                   "⚠️ Это подозрительно долго ({dur}) – проверь панель AMP.",
+                   "⚠️ Це підозріло довго ({dur}) – перевір панель AMP."),
+    "op_console": ("Ostatnie linie konsoli:", "Last console lines:", "Последние строки консоли:",
+                   "Останні рядки консолі:"),
+    "st_waiting": ("czeka na reakcję w panelu", "waiting for input in the panel", "ждёт действия в панели",
+                   "чекає на дію в панелі"),
+    "lang_first": ("🌐 Wybierz język / Choose a language / Выбери язык / Обери мову",
+                   "🌐 Wybierz język / Choose a language / Выбери язык / Обери мову",
+                   "🌐 Wybierz język / Choose a language / Выбери язык / Обери мову",
+                   "🌐 Wybierz język / Choose a language / Выбери язык / Обери мову"),
+    "bio_main_short": ("Twój panel serwerów gier AMP: gracze, start i stop, aktualizacje, kopie, ustawienia, alerty.",
+                       "Your AMP game server panel: players, start/stop, updates, backups, settings and alerts.",
+                       "Твоя панель игровых серверов AMP: игроки, запуск и стоп, обновления, бэкапы, настройки.",
+                       "Твоя панель ігрових серверів AMP: гравці, запуск і стоп, оновлення, бекапи, налаштування."),
+    "bio_main": ("Prywatny bot do serwerów gier na AMP (CubeCoders). Pisze, kto wchodzi i wychodzi, pilnuje laptopa, "
+                 "playit i aktualizacji systemu, a przyciskami włączasz, zatrzymujesz, aktualizujesz i backupujesz "
+                 "serwery, zmieniasz ustawienia świata i banujesz graczy – z postępem każdej akcji. Odpowiada tylko "
+                 "właścicielowi.",
+                 "A private bot for AMP (CubeCoders) game servers. It tells you who joins and leaves, watches the "
+                 "machine, playit and system updates, and lets you start, stop, update and back up servers, change "
+                 "world settings and ban players with buttons – with the progress of every action. It answers its "
+                 "owner only.",
+                 "Приватный бот для игровых серверов на AMP (CubeCoders). Сообщает, кто заходит и выходит, следит "
+                 "за ноутбуком, playit и обновлениями системы, а кнопками можно запускать, останавливать, обновлять "
+                 "и бэкапить серверы, менять настройки мира и банить игроков – с прогрессом каждого действия. "
+                 "Отвечает только владельцу.",
+                 "Приватний бот для ігрових серверів на AMP (CubeCoders). Повідомляє, хто заходить і виходить, "
+                 "стежить за ноутбуком, playit і оновленнями системи, а кнопками можна запускати, зупиняти, "
+                 "оновлювати й бекапити сервери, змінювати налаштування світу й банити гравців – з прогресом кожної "
+                 "дії. Відповідає лише власнику."),
+    "bio_friends_short": ("Zarządzaj serwerami gier, do których masz dostęp: start, stop, aktualizacja, gracze.",
+                          "Manage the game servers you were given: start, stop, update, players, settings.",
+                          "Управляй игровыми серверами, к которым есть доступ: запуск, стоп, обновление, игроки.",
+                          "Керуй ігровими серверами, до яких маєш доступ: запуск, стоп, оновлення, гравці."),
+    "bio_friends": ("Bot do serwerów gier dla znajomych. Napisz /start, wybierz język i poproś o dostęp – właściciel "
+                    "przydzieli ci serwery. Potem włączasz je i zatrzymujesz, aktualizujesz, robisz kopie, wyrzucasz, "
+                    "banujesz i odbanowujesz graczy oraz zmieniasz ustawienia świata. Właściciel widzi każdą akcję.",
+                    "A game server bot for friends. Send /start, pick your language and ask for access – the owner "
+                    "assigns you servers. Then you start and stop them, update them, make backups, kick, ban and unban "
+                    "players and change world settings. The owner sees every action.",
+                    "Бот игровых серверов для друзей. Напиши /start, выбери язык и попроси доступ – владелец выдаст "
+                    "тебе серверы. Потом ты их запускаешь и останавливаешь, обновляешь, делаешь бэкапы, кикаешь, "
+                    "банишь и разбаниваешь игроков и меняешь настройки мира. Владелец видит каждое действие.",
+                    "Бот ігрових серверів для друзів. Напиши /start, обери мову й попроси доступ – власник видасть "
+                    "тобі сервери. Потім ти їх запускаєш і зупиняєш, оновлюєш, робиш бекапи, кікаєш, баниш і "
+                    "розбанюєш гравців та змінюєш налаштування світу. Власник бачить кожну дію."),
     "act_restart": ("🔁 Restart", "🔁 Restart", "🔁 Перезапуск", "🔁 Перезапуск"),
     "act_update": ("⬆️ Aktualizacja gry", "⬆️ Game update", "⬆️ Обновление игры", "⬆️ Оновлення гри"),
     "act_backup": ("💾 Backup", "💾 Backup", "💾 Бэкап", "💾 Бекап"),
@@ -1442,26 +1511,32 @@ class Amp:
                 found.setdefault((label, f"{task['name']}|{task['desc']}"), task)
         return found
 
-    ACTIONS = ("start", "stop", "restart", "update", "backup")
+    # on/off = sama instancja AMP (offline <-> gotowa); start/stop = serwer gry w wlaczonej instancji
+    ACTIONS = ("on", "start", "stop", "off", "restart", "update", "backup")
     # komendy konsoli dla kick/ban/unban; {player} = nick; klucz = fragment nazwy modulu AMP
     GAME_COMMANDS = {"default": {"kick": "kick {player}", "ban": "ban {player}", "unban": "unban {player}"},
                      "minecraft": {"kick": "kick {player}", "ban": "ban {player}", "unban": "pardon {player}"}}
 
     def action(self, act, name):
         """
-        start: wlacza instancje (ADS), a gdy juz dziala - sama gre; stop: cala instancja;
-        restart: gra (albo instancja, gdy wylaczona); update: aktualizacja gry (SteamCMD itp.);
-        backup: kopia zapasowa instancji. Postep widac w zadaniach (AmpWatcher).
+        on: wlacza instancje (gra zostaje zatrzymana, mozna aktualizowac); off: wylacza cala instancje;
+        start: serwer gry (z wylaczonej instancji: najpierw ja wlacza, gre uruchamia AmpWatcher, gdy instancja
+        wstanie); stop: tylko serwer gry; restart: gra; update: aktualizacja gry (SteamCMD itp.); backup: kopia.
+        Postep sledzi AmpWatcher.track.
         """
         inst = self.find(name)
-        if act == "stop":
+        if act == "off":
             return self.call("ADSModule/StopInstance", InstanceName=name)
+        if act in ("on", "start") and not inst["running"]:
+            return self.call("ADSModule/StartInstance", InstanceName=name)
+        if act == "on":
+            return None  # juz wlaczona
         if not inst["running"]:
-            if act in ("start", "restart"):
-                return self.call("ADSModule/StartInstance", InstanceName=name)
             raise AmpError(t("srv_need_running"))
         if act == "start":
             return self.instance_call(inst["id"], "Core/Start")
+        if act == "stop":
+            return self.instance_call(inst["id"], "Core/Stop")
         if act == "restart":
             return self.instance_call(inst["id"], "Core/Restart")
         if act == "update":
@@ -1469,6 +1544,16 @@ class Amp:
         title = datetime.now().strftime("Telegram %Y-%m-%d %H:%M")
         return self.instance_call(inst["id"], "LocalFileBackupPlugin/TakeBackup", Title=title,
                                   Description="amp-tg-bot", Sticky=False)
+
+    def console_tail(self, name, n=6):
+        """Ostatnie linie konsoli (do wiadomosci o bledzie)."""
+        try:
+            inst = self.find(name)
+            updates = self.instance_call(inst["id"], "Core/GetUpdates") if inst["running"] else {}
+        except Exception:
+            return []
+        entries = updates.get("ConsoleEntries") if isinstance(updates, dict) else None
+        return [str(e.get("Contents", "")) for e in entries or [] if isinstance(e, dict)][-n:]
 
     def player_action(self, act, name, player):
         module = (self.find(name)["module"] or "").lower()
@@ -1481,7 +1566,7 @@ class Amp:
 AMP_STATES = {0: ("🔴", "st_stopped"), 5: ("🟡", "st_starting"), 7: ("🟡", "st_starting"), 10: ("🟡", "st_starting"),
               20: ("🟢", "st_ready"), 30: ("🟡", "st_starting"), 40: ("🟠", "st_stopping"), 45: ("🟠", "st_stopping"),
               50: ("💤", "st_sleeping"), 70: ("⬆️", "st_updating"), 75: ("⬆️", "st_updating"),
-              100: ("❌", "st_failed")}
+              80: ("⚠️", "st_waiting"), 100: ("❌", "st_failed")}
 
 
 def amp_state(inst, lang=None):
@@ -1507,7 +1592,8 @@ class AmpWatcher:
         self.tasks = {}  # (zrodlo, id) -> {"msg": message_id, "text": ostatni tekst, "edited": czas}
         self.states = None  # nazwa -> (running, AppState); None = jeszcze nie znamy
         self.instances = []
-        self.last_tasks = self.last_states = 0
+        self.last_tasks = self.last_states = self.last_ops = 0
+        self.ops = {}  # instancja -> akcja z bota, ktorej postep pokazujemy w jednej wiadomosci
 
     def task_text(self, label, task, final=None):
         inst = esc(label or t("panel"))
@@ -1520,8 +1606,122 @@ class AmpWatcher:
             lines.append(progress_bar(task["pct"]))
         return "\n".join(lines)
 
+    # ---------- akcje z bota: jedna wiadomosc z postepem az do konca ----------
+
+    OP_TIMEOUT = {"update": 3600, "backup": 3600}  # sekundy; reszta 15 min
+    OP_EDIT_SECONDS = 5
+
+    def busy(self, name):
+        op = self.ops.get(name)
+        return op["act"] if op else None
+
+    def track(self, name, act, chat, lang):
+        """Po akcji z bota: wiadomosc na czacie, ktory ja zlecil (tym samym botem), edytowana az do wyniku."""
+        try:
+            friendly = self.amp.find(name)["friendly"]
+        except Exception:
+            friendly = name
+        op = {"name": name, "act": act, "chat": chat, "lang": lang, "token": BOT["token"], "friendly": friendly,
+              "started": time.time(), "seen": set(), "kicked": act != "start", "tasks_seen": False,
+              "text": None, "edited": 0}
+        op["text"] = self.op_text(op, None, None, None)
+        op["msg"] = send(op["text"], chat)
+        self.ops[name] = op
+
+    def op_text(self, op, inst, pct, result, extra=""):
+        lang = op["lang"]
+        head = {"done": "✅", "failed": "❌", "waiting": "⚠️", "timeout": "⚠️"}.get(result, "⏳")
+        lines = [f"{head} <b>{esc(op['friendly'])}</b>: {t('act_' + op['act'], lang)}"]
+        dur = fmt_duration(time.time() - op["started"], lang)
+        if inst is not None:
+            emoji, state = amp_state(inst, lang)
+            lines.append(f"{emoji} {esc(state)} · {dur}")
+        if pct is not None and not result:
+            lines.append(progress_bar(pct))
+        if result == "done":
+            lines.append(t("op_update_none", lang) if op["act"] == "update" and not op["seen"] & {70, 75}
+                         and not op["tasks_seen"] else t("op_done", lang, dur=dur))
+        elif result in ("failed", "waiting", "timeout"):
+            lines.append(t("op_" + result, lang, dur=dur))
+        if extra:
+            lines.append(extra)
+        return "\n".join(lines)
+
+    def op_result(self, op, inst, state, busy, elapsed):
+        act = op["act"]
+        if state == 100:
+            return "failed"
+        if state == 80:
+            return "waiting"
+        running = inst["running"]
+        if act == "on" and running and state in (0, 20, 50):
+            return "done"
+        if act == "start" and state == 20:
+            return "done"
+        if act == "stop" and running and state == 0:
+            return "done"
+        if act == "off" and not running:
+            return "done"
+        if act == "restart" and state == 20 and (op["seen"] - {20} or elapsed > 20):
+            return "done"
+        if act == "update" and state in (0, 20) and not busy and elapsed > 15 and (
+                op["seen"] & {70, 75} or op["tasks_seen"] or elapsed > 90):
+            return "done"
+        if act == "backup" and not busy and (op["tasks_seen"] and elapsed > 5 or elapsed > 30):
+            return "done"
+        if elapsed > self.OP_TIMEOUT.get(act, 900):
+            return "timeout"
+        return None
+
+    def check_ops(self):
+        insts = {i["name"]: i for i in self.amp.instances()}
+        tasks = self.amp.tasks(list(insts.values())) if any(op["act"] in ("update", "backup")
+                                                            for op in self.ops.values()) else {}
+        now = time.time()
+        for name, op in list(self.ops.items()):
+            inst = insts.get(name)
+            if inst is None:
+                self.ops.pop(name)
+                continue
+            state = inst["state"] if inst["running"] else -1
+            op["seen"].add(state)
+            if not op["kicked"] and inst["running"] and state == 0:  # start z wylaczonej: instancja wstala
+                try:
+                    self.amp.instance_call(inst["id"], "Core/Start")
+                    op["kicked"] = True
+                except Exception as e:
+                    log(f"AMP start {name}: {e}")
+            mine = [task for (label, _), task in tasks.items()
+                    if label == inst["friendly"] or name in f"{task['name']} {task['desc']}"]
+            op["tasks_seen"] = op["tasks_seen"] or bool(mine)
+            pct = next((task["pct"] for task in mine if task["pct"] is not None), None)
+            result = self.op_result(op, inst, state, bool(mine), now - op["started"])
+            extra = ""
+            if result in ("failed", "waiting", "timeout"):
+                tail = self.amp.console_tail(name)
+                if tail:
+                    extra = t("op_console", op["lang"]) + "\n<pre>" + esc("\n".join(tail))[-1200:] + "</pre>"
+            text = self.op_text(op, inst, pct, result, extra)
+            if text != op["text"] and (result or now - op["edited"] >= self.OP_EDIT_SECONDS):
+                with via(op["token"]):
+                    if op["msg"]:
+                        edit(op["chat"], op["msg"], text)
+                    else:
+                        op["msg"] = send(text, op["chat"])
+                op.update(text=text, edited=now)
+            if result:
+                self.ops.pop(name)
+
+    def quiet(self, label, task=None):
+        """Czy instancja ma akcje z bota - wtedy jej zadania i stany pokazuje wiadomosc tej akcji."""
+        for op in self.ops.values():
+            if label == op["friendly"] or (task and op["name"] in f"{task['name']} {task['desc']}"):
+                return True
+        return False
+
     def check_tasks(self):
-        current = {k: v for k, v in self.amp.tasks(self.instances).items() if not AMP_TASK_IGNORE.search(v["name"])}
+        current = {k: v for k, v in self.amp.tasks(self.instances).items()
+                   if not AMP_TASK_IGNORE.search(v["name"]) and not self.quiet(k[0], v)}
         now = time.time()
         for key, task in current.items():
             text = self.task_text(key[0], task)
@@ -1551,7 +1751,8 @@ class AmpWatcher:
         if self.states is not None:
             for inst in self.instances:
                 before = self.states.get(inst["name"])
-                if before is not None and before != states[inst["name"]] and self.stable(inst):
+                if (before is not None and before != states[inst["name"]] and self.stable(inst)
+                        and inst["name"] not in self.ops):
                     emoji, state = amp_state(inst)
                     send(t("state_change", emoji=emoji, inst=esc(inst["friendly"]), state=esc(state)))
         self.states = states
@@ -1559,12 +1760,18 @@ class AmpWatcher:
     @staticmethod
     def stable(inst):
         # stany przejsciowe (uruchamia sie, zatrzymuje sie) widac w zadaniach; tu tylko wynik
-        return not inst["running"] or inst["state"] in (0, 20, 50, 100)
+        return not inst["running"] or inst["state"] in (0, 20, 50, 80, 100)
 
     def poll(self):
+        now = time.time()
+        if self.ops and now - self.last_ops >= self.OP_EDIT_SECONDS:
+            self.last_ops = now
+            try:
+                self.check_ops()
+            except Exception as e:
+                log(f"AMP akcje: {e}")
         if not (AMP_NOTIFY and self.amp.configured):
             return
-        now = time.time()
         try:
             if now - self.last_states >= AMP_STATE_SECONDS:
                 self.last_states = now
@@ -1929,6 +2136,25 @@ def set_menu(chat_id, commands=None):
         log(f"setMyCommands: {getattr(e, 'code', type(e).__name__)}")
 
 
+def set_descriptions(token, kind):
+    """Opis bota ("Co potrafi ten bot?") i krotkie bio w 4 jezykach; tylko gdy teksty sie zmienily."""
+    texts = {lang: (t(f"bio_{kind}", lang), t(f"bio_{kind}_short", lang)) for lang in LANG_ORDER}
+    signature = json.dumps(texts, sort_keys=True)
+    if not token or DESCRIPTIONS.get(kind) == signature:
+        return
+    try:
+        for lang, (full, short) in list(texts.items()) + [("", texts["en"])]:
+            extra = {"language_code": lang} if lang else {}
+            tg_api("setMyDescription", {"description": full[:512], **extra}, token=token)
+            tg_api("setMyShortDescription", {"short_description": short[:120], **extra}, token=token)
+        DESCRIPTIONS[kind] = signature
+    except Exception as e:
+        log(f"setMyDescription: {getattr(e, 'code', type(e).__name__)}")
+
+
+DESCRIPTIONS = {}  # rodzaj bota -> ostatnio ustawione teksty
+
+
 # ---------- aktualizacja z GitHuba ----------
 
 def version_tuple(v):
@@ -2051,6 +2277,7 @@ class Commands:
         self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
         self.cache = {}  # chat -> listy (gracze, ustawienia), do ktorych odwoluja sie przyciski po numerze
         self.scope = None  # None = admin; zbior instancji = znajomy, ktorego wiadomosc wlasnie obslugujemy
+        self.watcher = None  # AmpWatcher: postep akcji z bota (ustawiany w run())
         self.chat_key = ""  # czat, ktorego edytor ustawien wlasnie obslugujemy (klucz w self.cache)
 
     def poll(self, timeout, token=""):
@@ -2109,7 +2336,7 @@ class Commands:
         # dostep daje bot znajomych (albo glowny, gdy osobnego nie ma); glowny jest wtedy tylko admina
         grants = self.friend_bot or not FRIENDS_TOKEN
         key = f"{'stranger' if grants else 'outsider'}:{user.get('id')}"
-        lang = norm_lang(user.get("language_code")) or "en"
+        lang = CHAT_LANGS.get(str(chat)) or norm_lang(user.get("language_code")) or "en"
         if meta_get(self.db, key):
             send(t("private", lang), chat)
             return
@@ -2138,6 +2365,9 @@ class Commands:
         user = msg.get("from", {})
         self.scope = self.friend_scope(user)
         if self.scope is False:
+            if self.friend_bot and str(chat) not in CHAT_LANGS:  # nowa osoba: najpierw jezyk, potem prosba
+                send(t("lang_first"), chat, markup=LANG_BUTTONS)
+                return
             self.reject(user, chat)
             return
         lang = lang_for(chat)
@@ -2270,6 +2500,14 @@ class Commands:
         except Exception:
             pass
         self.scope = self.friend_scope(user)
+        if self.scope is False and self.friend_bot and chat is not None and norm_lang(data[5:]) \
+                and data.startswith("lang:"):  # nowa osoba wybrala jezyk: zapamietujemy i wysylamy prosbe
+            lang = norm_lang(data[5:])
+            meta_set(self.db, f"lang:{chat}", lang)
+            CHAT_LANGS[str(chat)] = lang
+            edit(chat, cq["message"]["message_id"], t("lang_set", lang, name=LANGS[lang]))
+            self.reject(user, chat)
+            return
         if self.scope is False or chat is None:
             return
         if self.scope is not None and not self.friend_may(data):
@@ -2726,16 +2964,25 @@ class Commands:
                  t("srv_players", lang, n=self.players_on(name))]
         if note:
             lines += ["", note]
-        up = inst["running"] and inst["state"] not in (0, -1, None)
-        acts = ["stop", "restart"] if up else ["start"] + (["stop"] if inst["running"] else [])
-        rows = [[self.btn("act_" + a, f"do:{a}:{name}", lang) for a in acts]]
+        state = inst["state"] if inst["running"] else -1
+
+        def row(*acts):
+            return [self.btn("act_" + a, f"do:{a}:{name}", lang) for a in acts]
+
+        if not inst["running"]:  # instancja wylaczona: wlacz sama instancje albo od razu serwer
+            rows = [row("start"), row("on")]
+        elif state == 20:  # serwer gry dziala
+            rows = [row("stop", "restart"), row("update", "backup"),
+                    [self.btn("btn_players", f"pl:{name}", lang)]
+                    + ([self.btn("btn_console", f"con:{name}", lang)] if self.scope is None else [])]
+        elif state in (0, 100, 80):  # instancja wlaczona, gra zatrzymana (albo blad) - tu sie aktualizuje
+            rows = [row("start"), row("update", "backup"), [self.btn("btn_players", f"pl:{name}", lang)]]
+        else:  # uruchamia sie, zatrzymuje, aktualizuje - tylko podglad
+            rows = [row("stop")]
         if inst["running"]:
-            rows += [[self.btn("act_update", f"do:update:{name}", lang),
-                      self.btn("act_backup", f"do:backup:{name}", lang)],
-                     [self.btn("btn_players", f"pl:{name}", lang)]
-                     + ([self.btn("btn_console", f"con:{name}", lang)] if self.scope is None else []),
-                     [self.btn("btn_settings", f"st:{name}", lang)]
-                     + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
+            rows += [[self.btn("btn_settings", f"st:{name}", lang)]
+                     + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else []),
+                     row("off")]
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
         return "\n".join(lines), {"inline_keyboard": rows}
 
@@ -2755,7 +3002,10 @@ class Commands:
         if act not in Amp.ACTIONS:
             return self.servers_view(lang)
         label = t("act_" + act, lang)
-        if kind == "do" and act != "start":  # wszystko poza startem wymaga potwierdzenia
+        running = self.watcher.busy(name) if self.watcher else None
+        if running:  # drugie klikniecie w trakcie - nic nie wysylamy drugi raz
+            return self.server_view(name, lang, note=t("op_busy", lang, action=t("act_" + running, lang)))
+        if kind == "do" and act not in ("on", "start", "backup"):  # reszta wymaga potwierdzenia
             text = t("srv_confirm", lang, action=label, name=esc(name))
             n = self.players_on(name)
             if n:
@@ -2767,6 +3017,9 @@ class Commands:
         except Exception as e:
             return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
         self.audit(user, chat, t("act_" + act), name)
+        if self.watcher:
+            self.watcher.track(name, act, chat, lang)
+            return self.server_view(name, lang, note=t("op_started", lang, action=label))
         return self.server_view(name, lang, note=t("srv_done", lang, action=label, name=esc(name)))
 
     def set_lang(self, chat, lang, announce=True):
@@ -2774,9 +3027,9 @@ class Commands:
         CHAT_LANGS[str(chat)] = lang
         if announce:
             send(t("lang_set", lang, name=LANGS[lang]), chat)
-        send(help_text(lang), chat, markup=NO_KEYBOARD)
-        if chat in ADMINS:
-            set_menu(chat)
+        friend = self.scope is not None or self.friend_bot
+        send(help_text(lang, FRIEND_COMMANDS if friend else None), chat, markup=NO_KEYBOARD)
+        set_menu(chat, FRIEND_COMMANDS if friend else None)
 
     def update(self, chat, lang, force=False):
         send(t("upd_checking", lang), chat)
@@ -2813,6 +3066,7 @@ def run():
     host = HostMonitor()
     commands = Commands(db, instances)
     amp_watch = AmpWatcher(commands.amp)
+    commands.watcher = amp_watch
     updates = UpdateMonitor(commands.amp, db)
     dota = DotaWatcher(db)
     startup = True
@@ -2848,6 +3102,16 @@ def run():
                      markup=NO_KEYBOARD)
                 for admin in ADMINS:
                     set_menu(admin)
+                set_descriptions(TOKEN, "main")
+                set_descriptions(FRIENDS_TOKEN, "friends")
+                if FRIENDS_TOKEN:  # menu dla nowych osob w bocie znajomych: start i jezyk
+                    with via(FRIENDS_TOKEN):
+                        try:
+                            tg_api("setMyCommands", {"commands": json.dumps(
+                                [{"command": "start", "description": "Start"},
+                                 {"command": "lang", "description": "Język / Language / Язык / Мова"}])})
+                        except Exception as e:
+                            log(f"setMyCommands (znajomi): {getattr(e, 'code', type(e).__name__)}")
                 with via(FRIENDS_TOKEN):
                     for uid, _name, _insts in friends_all(db):
                         set_menu(uid, FRIEND_COMMANDS)

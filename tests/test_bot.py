@@ -1,4 +1,6 @@
 """Testy parserow logow i komend na zmyslonych danych (bez Telegrama i internetu)."""
+import json
+
 import pytest
 
 import bot
@@ -339,10 +341,13 @@ def test_servers_flow_with_confirmation(env, monkeypatch):
 
     text, markup = click("do:stop:Valheim01")
     assert "1" in text and "⚠️" in text  # ostrzezenie, ze ktos gra
+    assert not any(p.endswith("Core/Stop") for p, _ in c.amp.calls)
+    text, _ = click("do!:stop:Valheim01")  # stop = sam serwer gry, instancja zostaje wlaczona
+    assert any(p.endswith("/API/Core/Stop") for p, _ in c.amp.calls)
     assert not any(p == "ADSModule/StopInstance" for p, _ in c.amp.calls)
-    text, _ = click("do!:stop:Valheim01")
-    assert ("ADSModule/StopInstance", {"SESSIONID": c.amp.session, "InstanceName": "Valheim01"}) in c.amp.calls
     assert "✅" in text
+    click("do!:off:Valheim01")  # wylaczenie calej instancji to osobny przycisk
+    assert ("ADSModule/StopInstance", {"SESSIONID": c.amp.session, "InstanceName": "Valheim01"}) in c.amp.calls
     text, _ = click("do!:update:Valheim01")
     assert "Update already running" in text
     stranger = len(edits)
@@ -592,7 +597,7 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
 
     sent_to.clear()
     click("do!:stop:Valheim01", friend)
-    assert any(p == "ADSModule/StopInstance" for p, _ in c.amp.calls)
+    assert any(p.endswith("/API/Core/Stop") for p, _ in c.amp.calls)
     assert any(chat is None and "Kumpel" in msg for chat, msg, _ in sent_to)  # admin widzi, co zrobil
 
     assert "con:Valheim01" not in str(click("srv:Valheim01", friend)[1])  # konsola tylko dla admina
@@ -841,9 +846,14 @@ def test_separate_friends_bot(env, monkeypatch):
     api_calls.clear()
     with bot.via("FRIENDS"):
         c.friend_bot = True
-        c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})  # do bota znajomych: prosba
+        c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})  # do bota znajomych: najpierw jezyk
+        assert "Choose a language" in api_calls[-1][3] and not any(chat == "1" for _, chat, _, _ in api_calls)
+        c.handle_callback({"id": "q", "from": friend, "data": "lang:uk", "message": {"chat": {"id": 42},
+                                                                                   "message_id": 3}})
         c.friend_bot = False
+    assert bot.lang_for(42) == "uk" and json.loads(bot.meta_get(env.db, "who:42"))["lang"] == "uk"
     sent = [(chat, token, text) for m, chat, token, text in api_calls if m == "sendMessage"]
+    assert any(chat == 42 and "власник" in text for chat, _, text in sent)  # prosba potwierdzona po ukrainsku
     assert any(chat == "1" and token == "MAIN" for chat, token, _ in sent)  # prosba do admina glownym botem
     assert any(chat == 42 and token == "FRIENDS" for chat, token, _ in sent)  # odpowiedz botem znajomych
 
@@ -897,3 +907,84 @@ def test_same_task_twice_is_one_message(watcher, env, monkeypatch):
     w.amp.ads_tasks = [{**task, "Id": "c"}]  # i jeszcze nowe Id w trakcie
     w.check_tasks()
     assert sum("Starting Instance" in m for m in env.sent) == 1
+
+
+
+class StateAmp(FakeAmp):
+    """Instancja, ktorej stan zmienia test: running + AppState."""
+
+    def __init__(self):
+        super().__init__()
+        self.expire_once = False
+        self.running, self.app_state = False, -1
+
+    def _post(self, path, payload, timeout=30):
+        if path == "ADSModule/GetInstances":
+            self.calls.append((path, payload))
+            return {"result": [{"AvailableInstances": [
+                {"InstanceName": "Valheim01", "InstanceID": "abc", "FriendlyName": "Valheim", "Module": "GenericModule",
+                 "Running": self.running, "AppState": self.app_state}]}]}
+        if path.endswith("Core/GetTasks"):
+            return {"result": []}
+        return super()._post(path, payload, timeout)
+
+
+def test_start_from_offline_with_progress_message(env, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    edits, sent_to = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((chat, mid, text)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text)) or 77)
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    c = bot.Commands(env.db, env.inst)
+    c.amp = StateAmp()
+    w = bot.AmpWatcher(c.amp)
+    c.watcher = w
+
+    def click(data):
+        c.handle_callback({"id": "q", "from": {"id": 1, "first_name": "Admin"}, "data": data,
+                           "message": {"chat": {"id": 1}, "message_id": 7}})
+        return edits[-1][2]
+
+    view = click("srv:Valheim01")
+    assert "do:start:Valheim01" not in view  # widok to tekst; przyciski sprawdzamy nizej
+    _, markup = c.server_view("Valheim01", "pl")
+    labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert "▶️ Uruchom serwer" in labels and "⏻ Włącz instancję" in labels  # offline: serwer albo sama instancja
+
+    click("do:start:Valheim01")
+    assert ("ADSModule/StartInstance", {"SESSIONID": c.amp.session, "InstanceName": "Valheim01"}) in c.amp.calls
+    assert sent_to[-1][0] == 1 and "Uruchom serwer" in sent_to[-1][1]  # wiadomosc z postepem
+    click("do:start:Valheim01")  # drugie klikniecie
+    assert "Już trwa" in edits[-1][2]
+    assert sum(1 for p, _ in c.amp.calls if p == "ADSModule/StartInstance") == 1
+
+    c.amp.running, c.amp.app_state = True, 0  # instancja wstala, gra jeszcze nie
+    clock[0] += 10
+    w.poll()
+    assert any(p.endswith("/API/Core/Start") for p, _ in c.amp.calls)  # bot sam uruchamia gre
+    c.amp.app_state = 20
+    clock[0] += 30
+    w.poll()
+    assert "✅" in edits[-1][2] and edits[-1][1] == 77 and "Valheim" in edits[-1][2]
+    assert w.ops == {}
+
+    _, markup = c.server_view("Valheim01", "pl")
+    labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert "⏹ Zatrzymaj serwer" in labels and "⏻ Wyłącz instancję" in labels
+
+
+def test_failed_start_shows_console(env, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    edits = []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append(text))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: 5)
+    amp = StateAmp()
+    amp.running, amp.app_state = True, 0
+    w = bot.AmpWatcher(amp)
+    w.track("Valheim01", "update", 1, "pl")
+    amp.app_state = 100
+    clock[0] += 10
+    w.poll()
+    assert "❌" in edits[-1] and "konsoli" in edits[-1] and w.ops == {}

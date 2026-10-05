@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.0 (2026-10)
+
+- **Instance vs game server.** ⏹ now stops only the game server (the AMP instance stays on, so you can update it); ⏻ turns the instance off or on separately. ▶️ on an instance that is off turns it on and then starts the game. The buttons follow the state: off, on with the game stopped, running.
+- **Every action from the bot is followed to the end** in one message: state, elapsed time, progress bar, then ✅ done, ❌ failed with the last console lines, ⚠️ when AMP waits for input in its panel (state 80), or ⚠️ when it takes too long. A second tap while it runs doesn't send the action again. The generic task and state messages stay quiet for that instance meanwhile.
+- **Game update reports its result**, also when AMP had nothing to download.
+- **Friends' bot asks for the language first** (4 languages), then sends the request; replies come in their language.
+- **Bot profiles fill themselves in:** the "What can this bot do?" text and the short bio of both bots in 4 languages.
+
 ## 2.0.1 (2026-10)
 
 - One AMP task no longer shows up as two identical messages (e.g. "Starting Instance" when the panel lists it twice or changes its id); tasks are matched by name and description.
