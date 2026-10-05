@@ -35,7 +35,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.2.0"
+VERSION = "2.2.1"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -1596,6 +1596,9 @@ class Amp:
         return [str(e.get("Contents", "")) for e in entries or [] if isinstance(e, dict)][-n:]
 
     def player_action(self, act, name, player):
+        player = re.sub(r"[\x00-\x1f\x7f]", "", str(player)).strip()[:64]  # nowa linia = druga komenda konsoli
+        if not player:
+            raise AmpError("?")
         module = (self.find(name)["module"] or "").lower()
         commands = next((c for key, c in self.GAME_COMMANDS.items() if key != "default" and key in module),
                         self.GAME_COMMANDS["default"])
@@ -2392,14 +2395,20 @@ def amp_test():
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
 COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), ("status", ""), ("history", " [N]"),
-            ("player", " NICK"), ("unban", " NICK"), ("week", ""), ("dota", " [add ID]"), ("lang", ""),
+            ("player", " NICK"), ("week", ""), ("dota", " [add ID]"), ("lang", ""),
             ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
-FRIEND_COMMANDS = [("servers", ""), ("unban", " NICK"), ("lang", ""), ("help", "")]
+FRIEND_COMMANDS = [("servers", ""), ("lang", ""), ("help", "")]
 # przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
 # stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
 SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
 SETTINGS_PAGE = 10
+# ustawienia, ktorych znajomy nie widzi: argumenty Javy / linia startowa / sciezki / pobieranie = uruchomienie
+# dowolnego kodu na maszynie; porty, IP, RCON, Steam, typ i wersja serwera, mody, pamiec, kopie, harmonogram
+FRIEND_SETTINGS_DENY = re.compile(
+    r"java|jvm|argument|command|cmd ?line|startup|path|exec|\bjar\b|script|url|download|port|\bip\b|bind|"
+    r"address|rcon|query|steam|branch|beta|install|plugin|\bmods?\b|bepinex|valheim ?plus|loader|forge|fabric|"
+    r"version|server ?type|memory|\bram\b|backup|schedul|update|webhook|token|whitelist file", re.I)
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
            "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang",
@@ -3302,7 +3311,7 @@ class Commands:
         self.chat_key = str(chat)
         key = (self.chat_key, "set", name)
         if key not in self.cache:
-            self.cache[key] = self.amp.settings(name)
+            self.cache[key] = self.load_settings(name)
         groups = [g for g in self.cache[key] if not g[0].startswith("🔎")]
         q = query.lower()
         found = [s for _, items in groups for s in items if q in f"{s['name']} {s['node']} {s['desc']}".lower()]
@@ -3312,6 +3321,15 @@ class Commands:
                 [self.btn("btn_search", f"sts:{name}", lang), self.btn("btn_back", f"st:{name}", lang)]]}
         return self.group_view(name, len(groups), 0, lang, title=t("set_found", lang, q=esc(query), n=len(found)))
 
+    def load_settings(self, name):
+        """Ustawienia instancji; znajomy dostaje tylko te bezpieczne (swiat, gra), patrz FRIEND_SETTINGS_DENY."""
+        groups = self.amp.settings(name)
+        if self.scope is None:
+            return groups
+        safe = [(g, [s for s in items if not FRIEND_SETTINGS_DENY.search(f"{s['node']} {s['name']}")])
+                for g, items in groups]
+        return [(g, items) for g, items in safe if items]
+
     def settings_callback(self, data, user, chat, lang):
         self.chat_key = str(chat)
         kind, _, rest = data.partition(":")
@@ -3320,7 +3338,7 @@ class Commands:
         key = (self.chat_key, "set", name)
         if kind == "st" or key not in self.cache:
             try:
-                self.cache[key] = self.amp.settings(name)
+                self.cache[key] = self.load_settings(name)
             except Exception as e:
                 return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
             if not self.cache[key]:

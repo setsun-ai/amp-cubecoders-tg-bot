@@ -767,8 +767,9 @@ def test_unban(env, monkeypatch):
 
     bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
     friend = {"id": 42, "first_name": "Kumpel"}
-    c.handle({"chat": {"id": 42}, "from": friend, "text": "/unban Bob"})
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/unban Bob"})  # wpisana komenda dalej dziala
     assert "ub!:Valheim01" in str(sent_to[-1][2]) and "Mc01" not in str(sent_to[-1][2])  # tylko jego serwery
+    assert "unban" not in [c for c, _ in bot.COMMANDS + bot.FRIEND_COMMANDS]  # ale nie ma jej w menu
     n = len(console_sent())
     click("ub!:Mc01", friend)
     assert len(console_sent()) == n
@@ -1107,3 +1108,42 @@ def test_mods_admin_only_with_upload_and_bin(env, mod_instances, monkeypatch):
     click(f"mdr:{idx}:Mc01")
     assert not (root / "Mc01" / "Minecraft" / "mods" / "jei-1.20.1.jar").exists()
     assert len(list((root / "Mc01" / "Minecraft" / ".tg-trash").iterdir())) == 1  # do kosza, nie na zawsze
+
+
+
+def test_friend_settings_and_console_injection(env, monkeypatch):
+    edits, sent_to = [], []
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+
+    class JavaAmp(SettingsAmp):
+        def _post(self, path, payload, timeout=30):
+            if path.endswith("Core/GetSettingsSpec"):
+                return {"result": {"Minecraft:Server": [
+                    {"Name": "Difficulty", "Node": "MinecraftModule.Game.Difficulty", "InputType": "enum",
+                     "EnumValues": {"2": "Normal"}, "CurrentValue": "2"},
+                    {"Name": "Additional Java arguments", "Node": "MinecraftModule.Java.Args", "InputType": "text"},
+                    {"Name": "Server type", "Node": "MinecraftModule.Minecraft.ServerType", "InputType": "enum",
+                     "EnumValues": {"Forge": "Forge"}}]}}
+            return super()._post(path, payload, timeout)
+
+    c = bot.Commands(env.db, env.inst)
+    c.amp = JavaAmp()
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+
+    def click(data, uid):
+        c.handle_callback({"id": "q", "from": {"id": uid, "first_name": "X"}, "data": data,
+                           "message": {"chat": {"id": uid}, "message_id": 7}})
+        return str(edits[-1])
+
+    assert "Java" in click("stc:0:0:Valheim01", 1) and "Server type" in edits[-1][1].__str__()  # admin: wszystko
+    view = click("stc:0:0:Valheim01", 42)
+    assert "Difficulty" in view and "Java" not in view and "Server type" not in view  # znajomy: tylko swiat
+
+    c.awaiting["1"] = {"kind": "unban", "name": "Valheim01"}
+    c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "Bob\nop Hacker", "message_id": 3})
+    click("ub!:Valheim01", 1)
+    sent = [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")]
+    assert sent[-1] == "unban Bobop Hacker" and "\n" not in sent[-1]  # bez drugiej komendy

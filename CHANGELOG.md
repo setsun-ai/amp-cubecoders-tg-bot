@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.1 (2026-10)
+
+- **Security:** friends no longer see settings that could run code or touch the machine (Java and start arguments, paths, download URLs, ports, RCON, Steam, server type and version, mods, backups, schedules) - before, "Additional Java arguments" in ⚙️ was a way to run anything on the server.
+- **Security:** a player name typed for unban/kick/ban loses line breaks and control characters before it reaches the game console, so it can't carry a second command.
+- `/unban` left the command menu; unban is the ♻️ button next to kick and ban (typing the command still works).
+- SECURITY.md describes mods and friends.
+
 ## 2.2.0 (2026-10)
 
 - **🧩 Mods, admin only** (friends never see them – a mod is code running on your machine). Minecraft: the loader (Forge, NeoForge, Fabric) and game version come from the server's libraries; type a name (Modrinth search, filtered to that loader and version) or paste a modrinth.com link - the right file and its required dependencies go to `mods/`. BepInEx games (Valheim): a name or a thunderstore.io link installs the package with its dependencies (BepInExPack is left to AMP) into `BepInEx/plugins/<package>/`, config files only when you don't have them yet. Or send the file (.jar, .zip, .dll; up to 20 MB). 🗑 moves a mod to `.tg-trash` next to the folder. After every change a 🔁 Restart button and a reminder that players usually need the same mods.
