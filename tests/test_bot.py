@@ -584,8 +584,12 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
     c.handle({"chat": {"id": 42}, "from": friend, "text": "/servers"})
     buttons = [b["text"] for row in sent_to[-1][2]["inline_keyboard"] for b in row]
     assert any("Valheim" in b for b in buttons) and not any("Minecraft" in b for b in buttons)
+    env.db.execute("INSERT INTO sessions(instance, game, username, joined, left) VALUES "
+                   "('Valheim01','Valheim','Viking',1,2), ('Mc01','Minecraft','Steve',3,4)")
     c.handle({"chat": {"id": 42}, "from": friend, "text": "/history"})
-    assert "/servers" in sent_to[-1][1] and "/history" not in sent_to[-1][1]  # tylko komendy znajomego
+    assert "Viking" in sent_to[-1][1] and "Steve" not in sent_to[-1][1]  # tylko jego serwery
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/player Steve"})
+    assert "☰" in sent_to[-1][1] and "Steve" not in sent_to[-1][1]  # komendy admina - nie dla znajomego
 
     text, markup = click("srv:Valheim01", friend)
     assert "pw:Valheim01" not in str(markup)  # bez hasel
@@ -1147,3 +1151,57 @@ def test_friend_settings_and_console_injection(env, monkeypatch):
     click("ub!:Valheim01", 1)
     sent = [pl["message"] for p, pl in c.amp.calls if p.endswith("SendConsoleMessage")]
     assert sent[-1] == "unban Bobop Hacker" and "\n" not in sent[-1]  # bez drugiej komendy
+
+
+
+def test_friends_bot_start_is_language_then_menu_hint(env, monkeypatch):
+    sent_to, menus = [], []
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
+    monkeypatch.setattr(bot, "edit", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot, "set_menu", lambda chat, commands=None: menus.append((chat, commands)))
+    monkeypatch.setattr(bot, "FRIENDS_TOKEN", "FRIENDS")
+    c = bot.Commands(env.db, env.inst)
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    bot.CHAT_LANGS["42"] = "pl"
+    friend = {"id": 42, "first_name": "Kumpel"}
+    c.friend_bot = True
+    c.handle({"chat": {"id": 42}, "from": friend, "text": "/start"})
+    assert "Choose a language" in sent_to[-1][1] and len(sent_to[-1][2]["inline_keyboard"]) == 2  # 4 przyciski
+    c.handle_callback({"id": "q", "from": friend, "data": "lang:en", "message": {"chat": {"id": 42},
+                                                                               "message_id": 3}})
+    assert "☰ Menu" in sent_to[-1][1] and "/servers" not in sent_to[-1][1]  # bez listy komend
+    assert menus[-1] == (42, bot.FRIEND_COMMANDS) and [x for x, _ in bot.FRIEND_COMMANDS] == [
+        "servers", "online", "history", "week"]
+
+
+def test_server_icon(env, mod_instances, monkeypatch):
+    root, _ = mod_instances
+    sent_to = []
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append(text))
+    monkeypatch.setattr(bot, "edit", lambda *a, **k: None)
+    monkeypatch.setattr(bot, "tg_api", lambda method, params=None, timeout=10, token=None: {
+        "result": {"file_path": "x.png"}})
+    png = (b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (64).to_bytes(4, "big") + (64).to_bytes(4, "big")
+           + b"rest")
+    monkeypatch.setattr(bot, "http_download", lambda url, dest: open(dest, "wb").write(png))
+    c = bot.Commands(env.db, env.inst)
+    c.amp = FakeAmp()
+    c.amp.expire_once = False
+    bot.friend_set(env.db, 42, "Kumpel", ["Mc01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    _, markup = c.server_view("Mc01", "pl")
+    assert "ic:Mc01" in str(markup)
+    c.scope = {"Mc01"}
+    _, markup = c.server_view("Mc01", "pl")
+    assert "ic:Mc01" in str(markup) and "md:Mc01" not in str(markup)  # znajomy: ikona tak, mody nie
+    c.awaiting["42"] = {"kind": "icon", "name": "Mc01"}
+    c.handle_document({"chat": {"id": 42}, "from": friend, "document": {"file_id": "F", "file_name": "i.png"}})
+    assert (root / "Mc01" / "Minecraft" / "server-icon.png").read_bytes() == png
+    assert bot.png_size(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (32).to_bytes(4, "big") * 2) == (32, 32)
+    monkeypatch.setattr(bot, "can_resize", lambda: False)
+    try:
+        bot.make_icon(b"\xff\xd8 jpeg")
+        raise AssertionError("JPEG without Pillow must be refused")
+    except bot.ModError as e:
+        assert "64×64" in str(e)

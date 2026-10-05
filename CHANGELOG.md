@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.3.0 (2026-10)
+
+- **Friends' bot, trimmed:** its menu is `/servers`, `/online`, `/history`, `/week` - the last three only for the friend's own servers. No Dota, laptop status, updates, unban command, language command or rollback there. `/start` answers with the language buttons straight away, and after the choice a short "your commands are under ☰ Menu" instead of a list.
+- **🖼 Server icon** for Minecraft (`server-icon.png`): send a 64×64 PNG as a file; with `python3-pil` on the server any picture is cropped and scaled. Friends can set it on their servers; shows after a restart.
+
 ## 2.2.1 (2026-10)
 
 - **Security:** friends no longer see settings that could run code or touch the machine (Java and start arguments, paths, download URLs, ports, RCON, Steam, server type and version, mods, backups, schedules) - before, "Additional Java arguments" in ⚙️ was a way to run anything on the server.

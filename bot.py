@@ -35,7 +35,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.2.1"
+VERSION = "2.3.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -352,6 +352,29 @@ STRINGS = {
     "act_start": ("▶️ Uruchom serwer", "▶️ Start server", "▶️ Запустить сервер", "▶️ Запустити сервер"),
     "act_stop": ("⏹ Zatrzymaj serwer", "⏹ Stop server", "⏹ Остановить сервер", "⏹ Зупинити сервер"),
     "btn_mods": ("🧩 Mody", "🧩 Mods", "🧩 Моды", "🧩 Моди"),
+    "fr_menu_hint": ("✅ Gotowe. Wszystkie komendy masz pod przyciskiem ☰ Menu obok pola wiadomości.",
+                     "✅ Done. All commands are under the ☰ Menu button next to the message field.",
+                     "✅ Готово. Все команды – под кнопкой ☰ Menu рядом с полем сообщения.",
+                     "✅ Готово. Усі команди – під кнопкою ☰ Menu поруч із полем повідомлення."),
+    "btn_icon": ("🖼 Ikona serwera", "🖼 Server icon", "🖼 Иконка сервера", "🖼 Іконка сервера"),
+    "icon_prompt": ("🖼 Wyślij obrazek na ikonę serwera (widać ją na liście serwerów w grze). Najlepiej PNG 64×64 "
+                    "wysłany jako plik{resize}.",
+                    "🖼 Send a picture for the server icon (shown in the in-game server list). Best a 64×64 PNG "
+                    "sent as a file{resize}.",
+                    "🖼 Пришли картинку для иконки сервера (видна в списке серверов в игре). Лучше PNG 64×64 "
+                    "файлом{resize}.",
+                    "🖼 Надішли картинку для іконки сервера (видно в списку серверів у грі). Найкраще PNG 64×64 "
+                    "файлом{resize}."),
+    "icon_resize": (" – inny rozmiar sam przytnę", " – I'll resize anything else", " – другой размер подгоню сам",
+                    " – інший розмір піджену сам"),
+    "icon_done": ("✅ Ikona ustawiona. Pojawi się po restarcie serwera.",
+                  "✅ Icon set. It shows up after a server restart.",
+                  "✅ Иконка установлена. Появится после перезапуска сервера.",
+                  "✅ Іконку встановлено. З'явиться після перезапуску сервера."),
+    "icon_bad": ("❌ To musi być PNG 64×64 wysłany jako plik (zdjęcia Telegram kompresuje).",
+                 "❌ It must be a 64×64 PNG sent as a file (Telegram compresses photos).",
+                 "❌ Нужен PNG 64×64, отправленный файлом (фото Telegram сжимает).",
+                 "❌ Потрібен PNG 64×64, надісланий файлом (фото Telegram стискає)."),
     "btn_mod_add": ("➕ Dodaj mod", "➕ Add a mod", "➕ Добавить мод", "➕ Додати мод"),
     "mod_title": ("🧩 <b>{name}</b> – mody ({game}):", "🧩 <b>{name}</b> – mods ({game}):",
                   "🧩 <b>{name}</b> – моды ({game}):", "🧩 <b>{name}</b> – моди ({game}):"),
@@ -1299,11 +1322,12 @@ def player_key(row):
     return steamid or (userid if game == "Minecraft" else None) or f"{game}:{username}"
 
 
-def weekly_summary(db, days=7, lang=None):
+def weekly_summary(db, days=7, lang=None, scope=None):
     now = int(time.time())
     since = now - days * 86400
+    where, params = scope_sql(scope)
     rows = db.execute("SELECT game, username, steamid, userid, joined, left FROM sessions "
-                      "WHERE left IS NOT NULL AND left > ?", (since,)).fetchall()
+                      f"WHERE left IS NOT NULL AND left > ?{where}", (since, *params)).fetchall()
     if not rows:
         return t("w_title", lang, days=days) + "\n" + t("w_nobody", lang)
     per_game = collections.defaultdict(lambda: [0, set(), 0])
@@ -1336,8 +1360,8 @@ def weekly_summary(db, days=7, lang=None):
     if per_hour:
         h = per_hour.most_common(1)[0][0]
         lines += ["", t("w_peak", lang, hours=f"{h:02d}:00–{(h + 1) % 24:02d}:00")]
-    deaths = db.execute("SELECT username, COUNT(*) c FROM deaths WHERE ts > ? GROUP BY username "
-                        "ORDER BY c DESC LIMIT 1", (since,)).fetchone()
+    deaths = db.execute(f"SELECT username, COUNT(*) c FROM deaths WHERE ts > ?{where} GROUP BY username "
+                        "ORDER BY c DESC LIMIT 1", (since, *params)).fetchone()
     if deaths:
         lines.append(t("w_deaths", lang, name=esc(deaths[0]), n=deaths[1]))
     return "\n".join(lines)
@@ -2230,6 +2254,47 @@ def install_mod_file(target, filename, path):
     return [filename]
 
 
+def icon_path(name):
+    """server-icon.png serwera Minecraft (inne gry nie maja ikony w liscie serwerow) albo None."""
+    mc = os.path.join(INSTANCES_DIR, name, "Minecraft")
+    return os.path.join(mc, "server-icon.png") if os.path.isdir(mc) else None
+
+
+def png_size(data):
+    if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def can_resize():
+    try:
+        import PIL.Image  # noqa: F401 - opcjonalnie (python3-pil); bez niego tylko gotowe PNG 64x64
+        return True
+    except ImportError:
+        return False
+
+
+def make_icon(data):
+    """Obrazek -> PNG 64x64 dla Minecrafta; bez Pillow tylko gotowy PNG 64x64."""
+    if png_size(data) == (64, 64):
+        return data
+    if not can_resize():
+        raise ModError(t("icon_bad"))
+    import io
+
+    from PIL import Image
+    try:
+        img = Image.open(io.BytesIO(data)).convert("RGBA")
+    except Exception:
+        raise ModError(t("icon_bad")) from None
+    side = min(img.size)  # kwadrat ze srodka, potem 64x64
+    left, top = (img.width - side) // 2, (img.height - side) // 2
+    img = img.crop((left, top, left + side, top + side)).resize((64, 64))
+    out = io.BytesIO()
+    img.save(out, "PNG")
+    return out.getvalue()
+
+
 # ---------- Dota 2 (OpenDota) ----------
 
 DOTA_MEDALS = {1: "Herald", 2: "Guardian", 3: "Crusader", 4: "Archon", 5: "Legend", 6: "Ancient", 7: "Divine",
@@ -2398,7 +2463,7 @@ COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), (
             ("player", " NICK"), ("week", ""), ("dota", " [add ID]"), ("lang", ""),
             ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
-FRIEND_COMMANDS = [("servers", ""), ("lang", ""), ("help", "")]
+FRIEND_COMMANDS = [("servers", ""), ("online", ""), ("history", " [N]"), ("week", "")]
 # przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
 # stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
 SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
@@ -2506,10 +2571,12 @@ def selftest():
     print(f"OK {VERSION}")
 
 
-def cmd_online(instances, lang=None):
+def cmd_online(instances, lang=None, scope=None):
     now = time.time()
     lines = []
-    for inst in instances.values():
+    for name, inst in instances.items():
+        if scope is not None and name not in scope:
+            continue
         if inst.status != "ok":
             continue
         players = sorted(inst.online.values(), key=lambda p: p["since"])
@@ -2527,10 +2594,18 @@ def format_sessions(rows, lang=None):
     return "<pre>" + esc("\n".join(out)) + "</pre>" if out else t("no_sessions", lang)
 
 
-def cmd_history(db, args, lang=None):
+def scope_sql(scope):
+    """(" AND instance IN (?,..)", parametry) dla znajomego; dla admina pusto."""
+    if scope is None:
+        return "", ()
+    return f" AND instance IN ({','.join('?' * len(scope)) or 'NULL'})", tuple(sorted(scope))
+
+
+def cmd_history(db, args, lang=None, scope=None):
     n = min(int(args[0]), 50) if args and args[0].isdigit() else 15
+    where, params = scope_sql(scope)
     rows = db.execute("SELECT game, username, steamid, userid, joined, left, note FROM sessions "
-                      "ORDER BY joined DESC LIMIT ?", (n,)).fetchall()
+                      f"WHERE 1{where} ORDER BY joined DESC LIMIT ?", (*params, n)).fetchall()
     return t("hist_title", lang, n=len(rows)) + "\n" + format_sessions(rows, lang)
 
 
@@ -2618,7 +2693,7 @@ class Commands:
                 elif msg and msg.get("text", "").startswith("/") and time.time() - msg.get("date", 0) < 120:
                     self.awaiting.pop(str(msg["chat"]["id"]), None)  # nowa komenda przerywa czekanie na dane
                     self.handle(msg)
-                elif msg and msg.get("document") and str(msg["chat"]["id"]) in self.awaiting:
+                elif msg and (msg.get("document") or msg.get("photo")) and str(msg["chat"]["id"]) in self.awaiting:
                     self.handle_document(msg)
                 elif msg and msg.get("text") and str(msg["chat"]["id"]) in self.awaiting:
                     self.handle_text(msg)
@@ -2666,8 +2741,9 @@ class Commands:
         user = msg.get("from", {})
         self.scope = self.friend_scope(user)
         if self.scope is False:
-            if self.friend_bot and str(chat) not in CHAT_LANGS:  # nowa osoba: najpierw jezyk, potem prosba
-                send(t("lang_first"), chat, markup=LANG_BUTTONS)
+            first = msg["text"].split()[0][1:].split("@")[0].lower() if msg["text"].startswith("/") else ""
+            if self.friend_bot and (str(chat) not in CHAT_LANGS or first in ("start", "lang")):
+                send(t("lang_first"), chat, markup=LANG_BUTTONS)  # od razu jezyk, potem prosba o dostep
                 return
             self.reject(user, chat)
             return
@@ -2675,16 +2751,22 @@ class Commands:
         parts = msg["text"].split()
         cmd, args = parts[0][1:].split("@")[0].lower(), parts[1:]
         cmd = ALIASES.get(cmd, cmd)
-        if self.scope is not None:  # znajomy: tylko swoje serwery i jezyk
+        if self.scope is not None:  # znajomy: tylko swoje serwery (lista, gracze, historia, tydzien)
             if cmd in ("servers", "serwery", "server"):
                 text, markup = self.servers_view(lang)
                 send(text, chat, markup=markup)
+            elif cmd == "online":
+                send(t("online_title", lang) + "\n" + cmd_online(self.instances, lang, self.scope), chat)
+            elif cmd == "history":
+                send(cmd_history(self.db, args, lang, self.scope), chat)
+            elif cmd == "week":
+                send(weekly_summary(self.db, lang=lang, scope=self.scope), chat)
             elif cmd == "unban":
                 self.unban_command(chat, args, lang)
-            elif cmd == "lang":
-                self.lang_command(chat, args, lang)
+            elif cmd in ("help", "lang") and self.friend_bot:  # /start: najpierw jezyk, komendy sa w menu
+                send(t("lang_first"), chat, markup=LANG_BUTTONS)
             else:
-                send(help_text(lang, FRIEND_COMMANDS), chat, markup=NO_KEYBOARD)
+                send(t("fr_menu_hint", lang), chat, markup=NO_KEYBOARD)
             return
         if cmd == "online":
             send(t("online_title", lang) + "\n" + cmd_online(self.instances, lang), chat)
@@ -2836,7 +2918,7 @@ class Commands:
                 pass
             self.set_lang(chat, lang, announce=False)
         elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
-                                               "pws:", "pw!:", "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:")
+                                               "pws:", "pw!:", "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:", "ic:")
                                               + SETTINGS_KINDS):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
@@ -2847,7 +2929,7 @@ class Commands:
         if data.startswith("lang:") or data == "srv":
             return True
         kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "ub", "ub!") + tuple(
+        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "ub", "ub!", "ic") + tuple(
                 k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
@@ -3189,10 +3271,47 @@ class Commands:
         rows.append([self.btn("btn_back", f"md:{name}", lang)])
         return t("mod_results", lang, q=esc(query)), {"inline_keyboard": rows}
 
+    def telegram_file(self, file_id, dest):
+        info = tg_api("getFile", {"file_id": file_id}).get("result") or {}
+        http_download(f"https://api.telegram.org/file/bot{BOT['token'] or TOKEN}/{info['file_path']}", dest)
+
+    def handle_icon(self, msg, wait):
+        chat, user = msg["chat"]["id"], msg.get("from", {})
+        self.scope = self.friend_scope(user)
+        name = wait["name"]
+        if self.scope is False or (self.scope is not None and name not in self.scope) or not icon_path(name):
+            return
+        self.awaiting.pop(str(chat), None)
+        lang = lang_for(chat)
+        file_id = (msg.get("document") or {}).get("file_id") or (msg.get("photo") or [{}])[-1].get("file_id")
+        tmp = icon_path(name) + ".upload"
+        try:
+            self.telegram_file(file_id, tmp)
+            data = make_icon(open(tmp, "rb").read())
+            with open(icon_path(name) + ".part", "wb") as f:
+                f.write(data)
+            os.replace(icon_path(name) + ".part", icon_path(name))
+        except Exception as e:  # bez URL-a w bledzie (token)
+            text, markup = self.server_view(name, lang, note=e.args[0] if isinstance(e, ModError) else t(
+                "mod_error", lang, err=type(e).__name__))
+            send(text, chat, markup=markup)
+            return
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        self.audit(user, chat, "🖼", name)
+        text, markup = self.server_view(name, lang, note=t("icon_done", lang))
+        send(text, chat, markup=markup)
+
     def handle_document(self, msg):
-        """Plik moda wyslany po ➕ Dodaj mod (tylko admin, do 20 MB - limit Telegrama dla botow)."""
+        """Plik po ➕ Dodaj mod (tylko admin) albo ikona serwera; do 20 MB - limit Telegrama dla botow."""
         chat, user = msg["chat"]["id"], msg.get("from", {})
         wait = self.awaiting.get(str(chat)) or {}
+        if wait.get("kind") == "icon":
+            self.handle_icon(msg, wait)
+            return
+        if not msg.get("document"):
+            return
         if user.get("id") not in ADMINS or wait.get("kind") != "mod" or (FRIENDS_TOKEN and self.friend_bot):
             return
         self.awaiting.pop(str(chat), None)
@@ -3407,8 +3526,10 @@ class Commands:
         if inst["running"]:
             rows += [[self.btn("btn_settings", f"st:{name}", lang)]
                      + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
-        if self.scope is None and mod_target(name):  # mody tylko dla admina
-            rows.append([self.btn("btn_mods", f"md:{name}", lang)])
+        extra = ([self.btn("btn_mods", f"md:{name}", lang)] if self.scope is None and mod_target(name) else []) \
+            + ([self.btn("btn_icon", f"ic:{name}", lang)] if icon_path(name) else [])  # mody tylko dla admina
+        if extra:
+            rows.append(extra)
         if inst["running"]:
             rows.append(row("off"))
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
@@ -3424,6 +3545,11 @@ class Commands:
             return self.server_view(rest, lang)
         if kind in ("pl", "pa", "pa!", "con", "con!", "pw", "pws", "pw!", "ub", "ub!"):
             return self.tools_callback(data, user, chat, lang)
+        if kind == "ic":
+            self.awaiting[str(chat)] = {"kind": "icon", "name": rest}
+            resize = t("icon_resize", lang) if can_resize() else ""
+            return (t("icon_prompt", lang, resize=resize),
+                    {"inline_keyboard": [[self.btn("btn_cancel", f"srv:{rest}", lang)]]})
         if kind in ("md", "mda", "mdr", "mdi"):
             return self.mods_callback(kind, rest, user, chat, lang) if self.scope is None else self.servers_view(lang)
         if kind + ":" in SETTINGS_KINDS:
@@ -3458,7 +3584,10 @@ class Commands:
         if announce:
             send(t("lang_set", lang, name=LANGS[lang]), chat)
         friend = self.scope is not None or self.friend_bot
-        send(help_text(lang, FRIEND_COMMANDS if friend else None), chat, markup=NO_KEYBOARD)
+        if friend:  # znajomy: zamiast listy komend - gdzie je znalezc (sa w menu)
+            send(t("fr_menu_hint", lang), chat, markup=NO_KEYBOARD)
+        else:
+            send(help_text(lang), chat, markup=NO_KEYBOARD)
         set_menu(chat, FRIEND_COMMANDS if friend else None)
 
     def update(self, chat, lang, force=False):
@@ -3538,8 +3667,7 @@ def run():
                     with via(FRIENDS_TOKEN):
                         try:
                             tg_api("setMyCommands", {"commands": json.dumps(
-                                [{"command": "start", "description": "Start"},
-                                 {"command": "lang", "description": "Język / Language / Язык / Мова"}])})
+                                [{"command": "start", "description": "Start · Język / Language / Язык / Мова"}])})
                         except Exception as e:
                             log(f"setMyCommands (znajomi): {getattr(e, 'code', type(e).__name__)}")
                 with via(FRIENDS_TOKEN):
