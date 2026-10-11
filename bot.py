@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -35,7 +36,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.3.0"
+VERSION = "2.4.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -87,6 +88,22 @@ DOTA_CHECK_MINUTES = float(os.environ.get("DOTA_CHECK_MINUTES", "60"))  # 0 = wy
 DOTA_SLOW_HOURS = 24  # gracze bez publicznych meczow i ranga wszystkich: raz na dobe
 OPENDOTA_API = "https://api.opendota.com/api"
 STEAM64_BASE = 76561197960265728
+# stop / restart / aktualizacja przy graczach online: najpierw komunikat w grze i odliczanie (0 = od razu)
+WARN_SECONDS = int(os.environ.get("WARN_SECONDS", "60"))
+CRASH_RESTART = os.environ.get("CRASH_RESTART", "0") != "0"  # 1 = po padnieciu gry jeden automatyczny start
+CRASH_WINDOW = 1800  # drugie padniecie w ciagu 30 min: bez automatycznego startu
+AC_ALERT = os.environ.get("AC_ALERT", "1") != "0"  # alert, gdy laptop przejdzie na baterie
+DISK_WARN_GB = float(os.environ.get("DISK_WARN_GB", "10"))  # 0 = bez alertu o miejscu na dysku
+MOD_CHECK_HOURS = float(os.environ.get("MOD_CHECK_HOURS", "12"))  # nowe wersje modow; 0 = wylaczone
+GAME_CHECK_HOURS = float(os.environ.get("GAME_CHECK_HOURS", "3"))  # nowe wersje gier; 0 = wylaczone
+GAME_AUTO_UPDATE = os.environ.get("GAME_AUTO_UPDATE", "0") != "0"  # 1 = aktualizuj sam, gdy nikt nie gra
+MEM_WARN = int(os.environ.get("MEM_WARN", "95"))  # alert, gdy serwer gry zajmie tyle % swojej pamieci; 0 = wylaczony
+# healthchecks.io (albo inny URL do pingowania): bot sam melduje, ze zyje; /fail, gdy panel AMP nie odpowiada
+HC_URL = os.environ.get("HC_URL", "").rstrip("/")
+HC_MINUTES = float(os.environ.get("HC_MINUTES", "5"))
+TUNNEL_CHECK_SECONDS = 120  # serwery z adresem z zewnatrz (🌐 Tunel): sprawdzanie co 2 min
+STEAMCMD_API = "https://api.steamcmd.net/v1/info"
+MOJANG_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
 POLL_SECONDS = 2
 RESCAN_SECONDS = 30
 HOST_CHECK_SECONDS = 30
@@ -653,6 +670,305 @@ STRINGS = {
     "state_change": ("{emoji} <b>{inst}</b>: {state}", "{emoji} <b>{inst}</b>: {state}",
                      "{emoji} <b>{inst}</b>: {state}", "{emoji} <b>{inst}</b>: {state}"),
     "panel": ("panel AMP", "AMP panel", "панель AMP", "панель AMP"),
+    # laptop: zasilacz i dysk
+    "ac_lost": ("🔌 <b>Zasilacz odłączony</b> – laptop działa na baterii ({bat}).",
+                "🔌 <b>Charger unplugged</b> – the laptop runs on battery ({bat}).",
+                "🔌 <b>Зарядка отключена</b> – ноутбук работает от батареи ({bat}).",
+                "🔌 <b>Зарядку відключено</b> – ноутбук працює від батареї ({bat})."),
+    "ac_back": ("🔌 Zasilacz znowu podłączony.", "🔌 Charger plugged in again.", "🔌 Зарядка снова подключена.",
+                "🔌 Зарядку знову підключено."),
+    "disk_low": ("💽 <b>Mało miejsca na dysku</b> {path}: wolne {free} GB ({pct}% zajęte). Najwięcej zajmują zwykle "
+                 "backupy AMP – stare usuniesz w panelu AMP (Backups).",
+                 "💽 <b>Low disk space</b> on {path}: {free} GB free ({pct}% used). AMP backups usually take the "
+                 "most – delete old ones in the AMP panel (Backups).",
+                 "💽 <b>Мало места на диске</b> {path}: свободно {free} ГБ (занято {pct}%). Больше всего обычно "
+                 "занимают бэкапы AMP – старые удалишь в панели AMP (Backups).",
+                 "💽 <b>Мало місця на диску</b> {path}: вільно {free} ГБ (зайнято {pct}%). Найбільше зазвичай "
+                 "займають бекапи AMP – старі видалиш у панелі AMP (Backups)."),
+    "disk_ok": ("💽 Dysk {path}: znowu wolne {free} GB.", "💽 Disk {path}: {free} GB free again.",
+                "💽 Диск {path}: снова свободно {free} ГБ.", "💽 Диск {path}: знову вільно {free} ГБ."),
+    # ostrzezenie graczy przed stop / restart / aktualizacja
+    "btn_warn": ("⏳ Za {s} s, z ostrzeżeniem w grze", "⏳ In {s} s, with an in-game warning",
+                 "⏳ Через {s} с, с предупреждением в игре", "⏳ За {s} с, з попередженням у грі"),
+    "btn_now": ("⚡ Od razu", "⚡ Right now", "⚡ Сразу", "⚡ Одразу"),
+    "warn_none": ("ℹ️ Ta gra nie przyjmuje komunikatów z konsoli – gracze nie dostaną ostrzeżenia.",
+                  "ℹ️ This game takes no console messages – players won't get a warning.",
+                  "ℹ️ Эта игра не принимает сообщения из консоли – игроки не получат предупреждения.",
+                  "ℹ️ Ця гра не приймає повідомлень із консолі – гравці не отримають попередження."),
+    "op_countdown": ("⏳ Za {s} s – gracze dostali ostrzeżenie w grze.",
+                     "⏳ In {s} s – players got an in-game warning.",
+                     "⏳ Через {s} с – игроки получили предупреждение в игре.",
+                     "⏳ За {s} с – гравці отримали попередження у грі."),
+    "op_scheduled": ("⏳ {action} za {s} s – gracze dostali ostrzeżenie. Odliczanie i ✖️ Anuluj są w wiadomości "
+                     "poniżej.",
+                     "⏳ {action} in {s} s – players were warned. The countdown and ✖️ Cancel are in the message below.",
+                     "⏳ {action} через {s} с – игроки предупреждены. Отсчёт и ✖️ Отмена – в сообщении ниже.",
+                     "⏳ {action} за {s} с – гравців попереджено. Відлік і ✖️ Скасувати – у повідомленні нижче."),
+    "op_cancelled": ("✖️ Odwołane.", "✖️ Cancelled.", "✖️ Отменено.", "✖️ Скасовано."),
+    "op_cancel_late": ("Za późno na odwołanie – akcja już ruszyła.", "Too late to cancel – the action already started.",
+                       "Поздно отменять – действие уже началось.", "Запізно скасовувати – дія вже почалася."),
+    "gw_stop": ("[Serwer] Serwer zostanie zatrzymany za {s} s.", "[Server] The server stops in {s} s.",
+                "[Сервер] Сервер остановится через {s} с.", "[Сервер] Сервер зупиниться за {s} с."),
+    "gw_off": ("[Serwer] Serwer zostanie wyłączony za {s} s.", "[Server] The server shuts down in {s} s.",
+               "[Сервер] Сервер выключится через {s} с.", "[Сервер] Сервер вимкнеться за {s} с."),
+    "gw_restart": ("[Serwer] Restart serwera za {s} s – zaraz wracamy.",
+                   "[Server] Server restart in {s} s – back soon.",
+                   "[Сервер] Перезапуск сервера через {s} с – скоро вернёмся.",
+                   "[Сервер] Перезапуск сервера за {s} с – скоро повернемося."),
+    "gw_update": ("[Serwer] Aktualizacja serwera za {s} s – serwer na chwilę zniknie.",
+                  "[Server] Server update in {s} s – it will be gone for a moment.",
+                  "[Сервер] Обновление сервера через {s} с – сервер ненадолго пропадёт.",
+                  "[Сервер] Оновлення сервера за {s} с – сервер ненадовго зникне."),
+    "gw_cancel": ("[Serwer] Odwołane – gramy dalej.", "[Server] Cancelled – keep playing.",
+                  "[Сервер] Отменено – играем дальше.", "[Сервер] Скасовано – граємо далі."),
+    # padniecie serwera gry
+    "crash": ("❗ <b>{inst}</b>: serwer gry padł ({state}).", "❗ <b>{inst}</b>: the game server went down ({state}).",
+              "❗ <b>{inst}</b>: игровой сервер упал ({state}).", "❗ <b>{inst}</b>: ігровий сервер упав ({state})."),
+    "crash_restarting": ("♻️ Uruchamiam go ponownie (jeden raz) – postęp poniżej.",
+                         "♻️ Starting it again (once) – progress below.",
+                         "♻️ Запускаю его снова (один раз) – прогресс ниже.",
+                         "♻️ Запускаю його знову (один раз) – прогрес нижче."),
+    "crash_again": ("⚠️ Padł drugi raz w ciągu 30 min – nie uruchamiam go sam, sprawdź konsolę.",
+                    "⚠️ Down twice within 30 min – not starting it myself, check the console.",
+                    "⚠️ Упал второй раз за 30 мин – сам не запускаю, проверь консоль.",
+                    "⚠️ Упав удруге за 30 хв – сам не запускаю, перевір консоль."),
+    "btn_open": ("🖥 Otwórz", "🖥 Open", "🖥 Открыть", "🖥 Відкрити"),
+    # subskrypcje znajomych
+    "btn_sub_up": ("{mark} Gdy serwer wstanie", "{mark} When the server is up", "{mark} Когда сервер запустится",
+                   "{mark} Коли сервер запуститься"),
+    "btn_sub_join": ("{mark} Gdy ktoś wejdzie", "{mark} When someone joins", "{mark} Когда кто-то зайдёт",
+                     "{mark} Коли хтось зайде"),
+    "sub_on": ("🔔 Dam znać: {what}.", "🔔 I'll let you know: {what}.", "🔔 Сообщу: {what}.", "🔔 Повідомлю: {what}."),
+    "sub_off": ("🔕 Wyłączone: {what}.", "🔕 Off: {what}.", "🔕 Выключено: {what}.", "🔕 Вимкнено: {what}."),
+    "sub_up_msg": ("🟢 <b>{inst}</b> działa – można wchodzić!", "🟢 <b>{inst}</b> is up – come and play!",
+                   "🟢 <b>{inst}</b> работает – можно заходить!", "🟢 <b>{inst}</b> працює – можна заходити!"),
+    "sub_join_msg": ("🟢 <b>{name}</b> wchodzi na <b>{inst}</b> (online: {n})",
+                     "🟢 <b>{name}</b> joined <b>{inst}</b> (online: {n})",
+                     "🟢 <b>{name}</b> заходит на <b>{inst}</b> (онлайн: {n})",
+                     "🟢 <b>{name}</b> заходить на <b>{inst}</b> (онлайн: {n})"),
+    # kopie: lista i przywracanie
+    "btn_backups": ("🗂 Kopie", "🗂 Backups", "🗂 Бэкапы", "🗂 Бекапи"),
+    "bk_title": ("🗂 <b>{name}</b> – kopie (najnowsze u góry). Dotknij, żeby przywrócić:",
+                 "🗂 <b>{name}</b> – backups (newest first). Tap one to restore:",
+                 "🗂 <b>{name}</b> – бэкапы (новые сверху). Нажми, чтобы восстановить:",
+                 "🗂 <b>{name}</b> – бекапи (нові згори). Натисни, щоб відновити:"),
+    "bk_none": ("Nie ma jeszcze żadnej kopii.", "There are no backups yet.", "Бэкапов пока нет.",
+                "Бекапів поки немає."),
+    "bk_confirm": ("❓ Przywrócić <b>{name}</b> do kopii z {when}?\n<i>{title}</i>\n\nNajpierw zatrzymam serwer i "
+                   "zrobię kopię obecnego stanu (da się do niej wrócić), potem przywrócę wybraną i uruchomię serwer, "
+                   "jeśli działał.",
+                   "❓ Restore <b>{name}</b> to the backup from {when}?\n<i>{title}</i>\n\nI'll stop the server and "
+                   "back up the current state first (you can go back to it), then restore the chosen one and start the "
+                   "server if it was running.",
+                   "❓ Восстановить <b>{name}</b> из бэкапа от {when}?\n<i>{title}</i>\n\nСначала остановлю сервер и "
+                   "сделаю бэкап текущего состояния (к нему можно вернуться), потом восстановлю выбранный и запущу "
+                   "сервер, если он работал.",
+                   "❓ Відновити <b>{name}</b> з бекапу від {when}?\n<i>{title}</i>\n\nСпочатку зупиню сервер і зроблю "
+                   "бекап поточного стану (до нього можна повернутися), потім відновлю вибраний і запущу сервер, якщо "
+                   "він працював."),
+    "btn_restore": ("⏪ Przywróć", "⏪ Restore", "⏪ Восстановить", "⏪ Відновити"),
+    "act_restore": ("⏪ Przywracanie kopii", "⏪ Backup restore", "⏪ Восстановление бэкапа", "⏪ Відновлення бекапу"),
+    "bk_phase_stopping": ("1/4 zatrzymuję serwer", "1/4 stopping the server", "1/4 останавливаю сервер",
+                          "1/4 зупиняю сервер"),
+    "bk_phase_backup": ("2/4 kopia obecnego stanu", "2/4 backing up the current state", "2/4 бэкап текущего состояния",
+                        "2/4 бекап поточного стану"),
+    "bk_phase_restoring": ("3/4 przywracam kopię", "3/4 restoring the backup", "3/4 восстанавливаю бэкап",
+                           "3/4 відновлюю бекап"),
+    "bk_phase_starting": ("4/4 uruchamiam serwer", "4/4 starting the server", "4/4 запускаю сервер",
+                          "4/4 запускаю сервер"),
+    "bk_safety": ("Przed przywróceniem", "Before restore", "Перед восстановлением", "Перед відновленням"),
+    # nowa instancja
+    "btn_new": ("➕ Nowa instancja", "➕ New instance", "➕ Новый инстанс", "➕ Новий інстанс"),
+    "act_create": ("➕ Nowa instancja", "➕ New instance", "➕ Новый инстанс", "➕ Новий інстанс"),
+    "new_prompt": ("➕ Napisz, jaką grę założyć (np. <code>valheim</code>, <code>minecraft</code>, "
+                   "<code>terraria</code>).",
+                   "➕ Type the game to set up (e.g. <code>valheim</code>, <code>minecraft</code>, "
+                   "<code>terraria</code>).",
+                   "➕ Напиши, какую игру поставить (например, <code>valheim</code>, <code>minecraft</code>, "
+                   "<code>terraria</code>).",
+                   "➕ Напиши, яку гру встановити (наприклад, <code>valheim</code>, <code>minecraft</code>, "
+                   "<code>terraria</code>)."),
+    "new_results": ("🔎 „{q}” – wybierz grę:", "🔎 \"{q}\" – pick a game:", "🔎 «{q}» – выбери игру:",
+                    "🔎 «{q}» – обери гру:"),
+    "new_nothing": ("Nie znalazłem gry „{q}” w AMP. Spróbuj inaczej (po angielsku, np. valheim).",
+                    "No game \"{q}\" in AMP. Try another name (e.g. valheim).",
+                    "Не нашёл игру «{q}» в AMP. Попробуй иначе (по-английски, например valheim).",
+                    "Не знайшов гру «{q}» в AMP. Спробуй інакше (англійською, наприклад valheim)."),
+    "new_name": ("✏️ {app}: napisz nazwę nowego serwera (tak będzie widoczny w AMP i w /servers).",
+                 "✏️ {app}: type a name for the new server (as shown in AMP and /servers).",
+                 "✏️ {app}: напиши название нового сервера (так он будет виден в AMP и в /servers).",
+                 "✏️ {app}: напиши назву нового сервера (так він буде видний в AMP і в /servers)."),
+    "new_bad_name": ("❌ Nazwa: od 1 do 40 znaków.", "❌ Name: 1 to 40 characters.",
+                     "❌ Название: от 1 до 40 символов.",
+                     "❌ Назва: від 1 до 40 символів."),
+    "new_confirm": ("❓ Założyć nową instancję <b>{name}</b> ({app})? AMP pobierze grę, ale jej nie uruchomi – "
+                    "najpierw ustawisz hasło i port.",
+                    "❓ Create a new instance <b>{name}</b> ({app})? AMP downloads the game but doesn't start it – set "
+                    "the password and port first.",
+                    "❓ Создать новый инстанс <b>{name}</b> ({app})? AMP скачает игру, но не запустит – сначала задай "
+                    "пароль и порт.",
+                    "❓ Створити новий інстанс <b>{name}</b> ({app})? AMP завантажить гру, але не запустить – спершу "
+                    "задай пароль і порт."),
+    "new_done": ("🆕 Instancja <b>{name}</b> jest w AMP – gra się pobiera (osobna wiadomość z postępem).\n{ports}\n"
+                 "• Gracze z zewnątrz: dodaj w playit.gg tunel na port gry.\n• Gdy ▶️ zgłosi brak uprawnień: w panelu "
+                 "AMP otwórz nową instancję → Configuration → Role Management i ustaw rolę bota jak w innych "
+                 "instancjach.",
+                 "🆕 Instance <b>{name}</b> is in AMP – the game is downloading (separate progress message).\n{ports}\n"
+                 "• Players from outside: add a playit.gg tunnel for the game port.\n• If ▶️ reports missing "
+                 "permissions: open the new instance in the AMP panel → Configuration → Role Management and set the "
+                 "bot's role like in the other instances.",
+                 "🆕 Инстанс <b>{name}</b> есть в AMP – игра скачивается (отдельное сообщение с прогрессом).\n{ports}\n"
+                 "• Игроки снаружи: добавь в playit.gg туннель на порт игры.\n• Если ▶️ сообщит о нехватке прав: "
+                 "открой новый инстанс в панели AMP → Configuration → Role Management и настрой роль бота, как в "
+                 "других инстансах.",
+                 "🆕 Інстанс <b>{name}</b> є в AMP – гра завантажується (окреме повідомлення з прогресом).\n{ports}\n"
+                 "• Гравці ззовні: додай у playit.gg тунель на порт гри.\n• Якщо ▶️ повідомить про брак прав: відкрий "
+                 "новий інстанс у панелі AMP → Configuration → Role Management і налаштуй роль бота, як в інших "
+                 "інстансах."),
+    "new_ports_none": ("🔌 Porty: AMP jeszcze ich nie podał – sprawdzisz w panelu.",
+                       "🔌 Ports: AMP hasn't reported them yet – check the panel.",
+                       "🔌 Порты: AMP их ещё не сообщил – проверь в панели.",
+                       "🔌 Порти: AMP їх ще не повідомив – перевір у панелі."),
+    # aktualizacje modow
+    "btn_mod_check": ("🔄 Sprawdź aktualizacje", "🔄 Check for updates", "🔄 Проверить обновления",
+                      "🔄 Перевірити оновлення"),
+    "mod_upd_title": ("🧩 <b>{name}</b> – nowe wersje modów ({n}):", "🧩 <b>{name}</b> – new mod versions ({n}):",
+                      "🧩 <b>{name}</b> – новые версии модов ({n}):", "🧩 <b>{name}</b> – нові версії модів ({n}):"),
+    "mod_upd_none": ("✅ Mody są aktualne (w {source} znalazłem {n} z nich).",
+                     "✅ Mods are up to date ({n} of them found on {source}).",
+                     "✅ Моды актуальны (в {source} нашёл {n} из них).",
+                     "✅ Моди актуальні (у {source} знайшов {n} з них)."),
+    "btn_mod_upd_all": ("⬆️ Zaktualizuj wszystkie ({n})", "⬆️ Update all ({n})", "⬆️ Обновить все ({n})",
+                        "⬆️ Оновити всі ({n})"),
+    "mod_upd_done": ("⬆️ Zaktualizowano: {list}\nStare wersje są w koszu (.tg-trash).",
+                     "⬆️ Updated: {list}\nOld versions are in the bin (.tg-trash).",
+                     "⬆️ Обновлено: {list}\nСтарые версии – в корзине (.tg-trash).",
+                     "⬆️ Оновлено: {list}\nСтарі версії – у кошику (.tg-trash)."),
+    "mods_notify": ("🧩 <b>{inst}</b> – nowe wersje modów: {n}\n{list}",
+                    "🧩 <b>{inst}</b> – new mod versions: {n}\n{list}",
+                    "🧩 <b>{inst}</b> – новые версии модов: {n}\n{list}",
+                    "🧩 <b>{inst}</b> – нові версії модів: {n}\n{list}"),
+    "btn_mods_show": ("🧩 Pokaż i zaktualizuj", "🧩 Show and update", "🧩 Показать и обновить",
+                      "🧩 Показати й оновити"),
+    # aktualizacje gier
+    "game_update": ("⬆️ <b>{inst}</b>: jest nowa wersja gry ({old} → {new}).",
+                    "⬆️ <b>{inst}</b>: a new game version is out ({old} → {new}).",
+                    "⬆️ <b>{inst}</b>: вышла новая версия игры ({old} → {new}).",
+                    "⬆️ <b>{inst}</b>: вийшла нова версія гри ({old} → {new})."),
+    "game_update_mc": ("Jeśli w ⚙️ masz przypiętą wersję Minecrafta, zmień ją przed aktualizacją.",
+                       "If the Minecraft version is pinned in ⚙️, change it before updating.",
+                       "Если в ⚙️ закреплена версия Minecraft, смени её перед обновлением.",
+                       "Якщо в ⚙️ закріплена версія Minecraft, зміни її перед оновленням."),
+    "game_update_auto": ("🤖 Nikt nie gra – aktualizuję sam, postęp poniżej.",
+                         "🤖 Nobody is playing – updating it myself, progress below.",
+                         "🤖 Никто не играет – обновляю сам, прогресс ниже.",
+                         "🤖 Ніхто не грає – оновлюю сам, прогрес нижче."),
+    "game_update_wait": ("🤖 Zaktualizuję sam, gdy wszyscy wyjdą.", "🤖 I'll update it myself once everyone leaves.",
+                         "🤖 Обновлю сам, когда все выйдут.", "🤖 Оновлю сам, коли всі вийдуть."),
+    # most czatu Minecraft <-> grupa
+    "c_bridge": ("Most czatu Minecraft ↔ grupa", "Minecraft chat bridge ↔ group", "Мост чата Minecraft ↔ группа",
+                 "Міст чату Minecraft ↔ група"),
+    "bridge_usage": ("💬 Most czatu: dodaj mnie do grupy, w @BotFather wyłącz mi Group Privacy (Bot Settings) i "
+                     "napisz w grupie <code>/bridge NAZWA_INSTANCJI</code>. Wyłączenie: <code>/bridge off</code>.\n"
+                     "Teraz: {now}",
+                     "💬 Chat bridge: add me to a group, turn off my Group Privacy in @BotFather (Bot Settings) and "
+                     "send <code>/bridge INSTANCE_NAME</code> in the group. Off: <code>/bridge off</code>.\nNow: {now}",
+                     "💬 Мост чата: добавь меня в группу, в @BotFather выключи мне Group Privacy (Bot Settings) и "
+                     "напиши в группе <code>/bridge ИМЯ_ИНСТАНСА</code>. Выключить: <code>/bridge off</code>.\n"
+                     "Сейчас: {now}",
+                     "💬 Міст чату: додай мене до групи, у @BotFather вимкни мені Group Privacy (Bot Settings) і "
+                     "напиши в групі <code>/bridge НАЗВА_ІНСТАНСУ</code>. Вимкнути: <code>/bridge off</code>.\n"
+                     "Зараз: {now}"),
+    "bridge_none": ("brak", "none", "нет", "немає"),
+    "bridge_set": ("💬 Most czatu włączony: <b>{name}</b> ↔ ta grupa. Czat z gry pojawi się tutaj, a wasze wiadomości "
+                   "trafią do gry.",
+                   "💬 Chat bridge on: <b>{name}</b> ↔ this group. Game chat shows up here and your messages go to the "
+                   "game.",
+                   "💬 Мост чата включён: <b>{name}</b> ↔ эта группа. Чат игры появится здесь, а ваши сообщения "
+                   "попадут в игру.",
+                   "💬 Міст чату ввімкнено: <b>{name}</b> ↔ ця група. Чат гри з'явиться тут, а ваші повідомлення "
+                   "потраплять у гру."),
+    "bridge_off": ("💬 Most czatu wyłączony.", "💬 Chat bridge off.", "💬 Мост чата выключен.",
+                   "💬 Міст чату вимкнено."),
+    # RAM i CPU serwerow
+    "srv_metrics": ("📊 CPU {cpu} · RAM {ram}", "📊 CPU {cpu} · RAM {ram}", "📊 CPU {cpu} · RAM {ram}",
+                    "📊 CPU {cpu} · RAM {ram}"),
+    "mem_high": ("🧠 <b>{inst}</b>: pamięć {pct}% ({ram}) – serwer może zwolnić albo paść. Pomaga restart albo więcej "
+                 "RAM w ⚙️.",
+                 "🧠 <b>{inst}</b>: memory {pct}% ({ram}) – the server may slow down or crash. A restart or more "
+                 "RAM in ⚙️ helps.",
+                 "🧠 <b>{inst}</b>: память {pct}% ({ram}) – сервер может замедлиться или упасть. Поможет перезапуск "
+                 "или больше RAM в ⚙️.",
+                 "🧠 <b>{inst}</b>: пам'ять {pct}% ({ram}) – сервер може сповільнитися або впасти. Допоможе "
+                 "перезапуск або більше RAM у ⚙️."),
+    "mem_ok": ("🧠 <b>{inst}</b>: pamięć znowu {pct}%.", "🧠 <b>{inst}</b>: memory back at {pct}%.",
+               "🧠 <b>{inst}</b>: память снова {pct}%.", "🧠 <b>{inst}</b>: пам'ять знову {pct}%."),
+    # sprawdzanie z zewnatrz (przez tunel)
+    "btn_tunnel": ("🌐 Tunel", "🌐 Tunnel", "🌐 Туннель", "🌐 Тунель"),
+    "btn_check_now": ("🔎 Sprawdź teraz", "🔎 Check now", "🔎 Проверить сейчас", "🔎 Перевірити зараз"),
+    "tn_prompt": ("🌐 <b>{name}</b> – adres, pod którym gracze łączą się z zewnątrz (z playit.gg), np. "
+                  "<code>abc.joinmc.link:25565</code>. Gra na UDP (Valheim): adres portu zapytań z dopiskiem "
+                  "<code>udp</code>, np. <code>1.2.3.4:2457 udp</code>. Myślnik <code>-</code> usuwa adres.\n"
+                  "Teraz: {now}",
+                  "🌐 <b>{name}</b> – the address players use from outside (from playit.gg), e.g. "
+                  "<code>abc.joinmc.link:25565</code>. A UDP game (Valheim): the query port address with "
+                  "<code>udp</code>, e.g. <code>1.2.3.4:2457 udp</code>. A dash <code>-</code> removes it.\nNow: {now}",
+                  "🌐 <b>{name}</b> – адрес, по которому игроки заходят снаружи (из playit.gg), например "
+                  "<code>abc.joinmc.link:25565</code>. Игра на UDP (Valheim): адрес порта запросов с припиской "
+                  "<code>udp</code>, например <code>1.2.3.4:2457 udp</code>. Дефис <code>-</code> удаляет адрес.\n"
+                  "Сейчас: {now}",
+                  "🌐 <b>{name}</b> – адреса, за якою гравці заходять ззовні (з playit.gg), наприклад "
+                  "<code>abc.joinmc.link:25565</code>. Гра на UDP (Valheim): адреса порту запитів із приміткою "
+                  "<code>udp</code>, наприклад <code>1.2.3.4:2457 udp</code>. Дефіс <code>-</code> видаляє адресу.\n"
+                  "Зараз: {now}"),
+    "tn_bad": ("❌ To nie wygląda na adres host:port.", "❌ That doesn't look like a host:port address.",
+               "❌ Это не похоже на адрес host:port.", "❌ Це не схоже на адресу host:port."),
+    "tn_saved": ("✅ Zapisane. Sprawdzam co 2 min, gdy serwer działa.",
+                 "✅ Saved. I check every 2 min while the server runs.",
+                 "✅ Сохранено. Проверяю каждые 2 мин, пока сервер работает.",
+                 "✅ Збережено. Перевіряю кожні 2 хв, поки сервер працює."),
+    "tn_removed": ("🗑 Adres usunięty – nie sprawdzam.", "🗑 Address removed – not checking.",
+                   "🗑 Адрес удалён – не проверяю.", "🗑 Адресу видалено – не перевіряю."),
+    "tn_ok": ("🌐 Z zewnątrz: ✅ odpowiada{detail}", "🌐 From outside: ✅ answers{detail}",
+              "🌐 Снаружи: ✅ отвечает{detail}", "🌐 Ззовні: ✅ відповідає{detail}"),
+    "tn_fail": ("🌐 Z zewnątrz: ❌ nie odpowiada ({err})", "🌐 From outside: ❌ no answer ({err})",
+                "🌐 Снаружи: ❌ не отвечает ({err})", "🌐 Ззовні: ❌ не відповідає ({err})"),
+    "tn_down": ("🌐 <b>{inst}</b> działa, ale z zewnątrz nie odpowiada ({addr}: {err}). Sprawdź tunel w playit.gg.",
+                "🌐 <b>{inst}</b> is running but doesn't answer from outside ({addr}: {err}). Check the playit.gg "
+                "tunnel.",
+                "🌐 <b>{inst}</b> работает, но снаружи не отвечает ({addr}: {err}). Проверь туннель в playit.gg.",
+                "🌐 <b>{inst}</b> працює, але ззовні не відповідає ({addr}: {err}). Перевір тунель у playit.gg."),
+    "tn_up": ("🌐 <b>{inst}</b> znowu odpowiada z zewnątrz.", "🌐 <b>{inst}</b> answers from outside again.",
+              "🌐 <b>{inst}</b> снова отвечает снаружи.", "🌐 <b>{inst}</b> знову відповідає ззовні."),
+    # whitelist Minecrafta
+    "btn_whitelist": ("📋 Whitelist", "📋 Whitelist", "📋 Вайтлист", "📋 Вайтлист"),
+    "wl_title": ("📋 <b>{name}</b> – whitelist: {state}. 🗑 usuwa gracza z listy:",
+                 "📋 <b>{name}</b> – whitelist: {state}. 🗑 removes a player:",
+                 "📋 <b>{name}</b> – вайтлист: {state}. 🗑 убирает игрока из списка:",
+                 "📋 <b>{name}</b> – вайтлист: {state}. 🗑 прибирає гравця зі списку:"),
+    "wl_on": ("włączona – wchodzą tylko gracze z listy", "on – only listed players can join",
+              "включён – заходят только игроки из списка", "увімкнено – заходять лише гравці зі списку"),
+    "wl_off": ("wyłączona – wejść może każdy", "off – anyone can join", "выключен – зайти может любой",
+               "вимкнено – зайти може будь-хто"),
+    "wl_empty": ("Lista jest pusta.", "The list is empty.", "Список пуст.", "Список порожній."),
+    "btn_wl_add": ("➕ Dodaj gracza", "➕ Add a player", "➕ Добавить игрока", "➕ Додати гравця"),
+    "btn_wl_on": ("🔒 Włącz whitelist", "🔒 Turn whitelist on", "🔒 Включить вайтлист", "🔒 Увімкнути вайтлист"),
+    "btn_wl_off": ("🔓 Wyłącz whitelist", "🔓 Turn whitelist off", "🔓 Выключить вайтлист", "🔓 Вимкнути вайтлист"),
+    "wl_prompt": ("➕ <b>{name}</b>: napisz nick gracza do whitelisty.", "➕ <b>{name}</b>: type the player's nick.",
+                  "➕ <b>{name}</b>: напиши ник игрока для вайтлиста.",
+                  "➕ <b>{name}</b>: напиши нік гравця для вайтлиста."),
+    "wl_bad": ("❌ Nick Minecrafta: 3–16 znaków, tylko litery, cyfry i _.",
+               "❌ A Minecraft nick: 3–16 characters, only letters, digits and _.",
+               "❌ Ник Minecraft: 3–16 символов, только буквы, цифры и _.",
+               "❌ Нік Minecraft: 3–16 символів, лише літери, цифри й _."),
+    "wl_need_running": ("Serwer musi działać – whitelistę zmienia komenda w grze.",
+                        "The server must be running – the whitelist is changed by a game command.",
+                        "Сервер должен работать – вайтлист меняется командой в игре.",
+                        "Сервер має працювати – вайтлист змінюється командою в грі."),
+    "bridge_bad": ("❌ Nie znam instancji Minecrafta „{name}”. Moje: {list}",
+                   "❌ I don't know a Minecraft instance \"{name}\". Mine: {list}",
+                   "❌ Не знаю инстанс Minecraft «{name}». Мои: {list}",
+                   "❌ Не знаю інстанс Minecraft «{name}». Мої: {list}"),
 }
 
 
@@ -887,12 +1203,18 @@ class MinecraftRules:
                        r"fell |experienced kinetic|went up in flames|went off with a bang|burned to death|"
                        r"tried to swim|discovered the floor|starved|suffocated|froze to death|"
                        r"withered away|left the confines|didn't want to live)")
+    # czat: "<Steve> hej"; od 1.19 bez podpisu wiadomosci przed nickiem stoi "[Not Secure]"
+    CHAT = re.compile(PRE + r"(?:\[Not Secure\]\s*)?<(\w{1,16})> (.+?)\s*$")
 
     def __init__(self):
         self.uuids = {}
         self.ips = {}
 
     def feed(self, line, inst):
+        m = self.CHAT.search(line)
+        if m:
+            inst.on_chat(m.group(1), m.group(2))
+            return
         m = self.UUID.search(line)
         if m:
             self.uuids[m.group(1)] = m.group(2)
@@ -998,6 +1320,13 @@ class Instance:
             lines.append(f"🌍 IP: <code>{esc(ip)}</code>")
         lines.append(t("online_count", n=len(self.online)))
         send("\n".join(lines))
+        notify_subs(self.db, self.name, "join", "sub_join_msg", name=esc(name), n=len(self.online))
+
+    def on_chat(self, name, text):
+        """Czat z gry do grupy z mostem (/bridge)."""
+        chat = BRIDGES.get(self.name)
+        if chat and not self.silent:
+            send(f"💬 <b>{esc(name)}</b>: {esc(text)}", chat)
 
     def on_leave(self, name=None, userid=None, steamid=None, note=None):
         key = None
@@ -1109,6 +1438,8 @@ def open_db(readonly=False):
         CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
         CREATE TABLE IF NOT EXISTS friends(user_id INTEGER PRIMARY KEY, name TEXT, instances TEXT, added INTEGER);
         CREATE TABLE IF NOT EXISTS dota(account_id INTEGER PRIMARY KEY, name TEXT, last_match INTEGER, added INTEGER);
+        CREATE TABLE IF NOT EXISTS subs(user_id INTEGER, instance TEXT, kind TEXT,
+                                        PRIMARY KEY(user_id, instance, kind));
     """)
     for column in ("rank_tier INTEGER", "rank_at INTEGER", "matches_at INTEGER", "public INTEGER"):
         try:  # baza z 1.9.0: dopisujemy kolumny
@@ -1150,7 +1481,68 @@ def friend_set(db, user_id, name, instances):
 
 def friend_remove(db, user_id):
     db.execute("DELETE FROM friends WHERE user_id=?", (user_id,))
+    db.execute("DELETE FROM subs WHERE user_id=?", (user_id,))
     db.commit()
+
+
+# ---------- subskrypcje znajomych: "daj znac, gdy serwer wstanie / ktos wejdzie" ----------
+
+SUB_KINDS = ("up", "join")
+FRIENDLY = {}  # instancja -> nazwa z panelu AMP (do wiadomosci dla znajomych); odswieza AmpWatcher
+
+
+def subs_of(db, user_id, instance):
+    return {k for (k,) in db.execute("SELECT kind FROM subs WHERE user_id=? AND instance=?", (user_id, instance))}
+
+
+def sub_toggle(db, user_id, instance, kind):
+    """Wlacza albo wylacza subskrypcje; zwraca nowy stan (True = wlaczona)."""
+    if kind in subs_of(db, user_id, instance):
+        db.execute("DELETE FROM subs WHERE user_id=? AND instance=? AND kind=?", (user_id, instance, kind))
+        db.commit()
+        return False
+    db.execute("INSERT OR IGNORE INTO subs(user_id, instance, kind) VALUES (?,?,?)", (user_id, instance, kind))
+    db.commit()
+    return True
+
+
+def notify_subs(db, instance, kind, key, **kw):
+    """Wiadomosc do znajomych, ktorzy subskrybuja te instancje (botem znajomych, w ich jezyku)."""
+    rows = db.execute("SELECT user_id FROM subs WHERE instance=? AND kind=?", (instance, kind)).fetchall()
+    for (uid,) in rows:
+        friend = friend_get(db, uid)
+        if not friend or instance not in friend["instances"]:  # dostep zabrany: subskrypcja tez znika
+            db.execute("DELETE FROM subs WHERE user_id=? AND instance=?", (uid, instance))
+            db.commit()
+            continue
+        with via(FRIENDS_TOKEN):
+            send(t(key, lang_for(uid), inst=esc(FRIENDLY.get(instance, instance)), **kw), uid)
+
+
+# ---------- most czatu Minecraft <-> grupa na Telegramie ----------
+
+BRIDGES = {}  # instancja -> czat grupy (str); w bazie meta "bridge:<czat>" = instancja
+
+
+def load_bridges(db):
+    BRIDGES.clear()
+    for key, value in db.execute("SELECT key, value FROM meta WHERE key LIKE 'bridge:%'"):
+        BRIDGES[value] = key[len("bridge:"):]
+
+
+def bridge_set(db, chat, instance):
+    """Jedna instancja <-> jedna grupa; instance=None wylacza most w tej grupie."""
+    db.execute("DELETE FROM meta WHERE key=?", (f"bridge:{chat}",))
+    if instance:
+        db.execute("DELETE FROM meta WHERE key LIKE 'bridge:%' AND value=?", (instance,))
+        db.execute("INSERT INTO meta(key, value) VALUES (?,?)", (f"bridge:{chat}", instance))
+    db.commit()
+    load_bridges(db)
+
+
+def game_text(text, limit=200):
+    """Tekst do konsoli gry: bez znakow sterujacych (nowa linia = druga komenda konsoli), przyciety."""
+    return re.sub(r"[\x00-\x1f\x7f]", " ", str(text)).strip()[:limit]
 
 
 def load_langs(db):
@@ -1276,13 +1668,55 @@ class HostMonitor:
         self.playit_mode = playit_mode()
         self.playit_fails = 0
         self.playit_down = False
+        self.ac_fails = 0
+        self.ac_alerted = False
+        self.disk_alerted = set()  # urzadzenia (st_dev), o ktorych juz pisalismy
 
     def startup_notes(self):
         return [t("no_playit", svc=PLAYIT_SERVICE)] if self.playit_mode is None else []
 
+    def check_ac(self, ac, bat):
+        """Zasilacz odlaczony przez 2 kolejne sprawdzenia (ok. minuta) = alert; po podlaczeniu - jedna wiadomosc."""
+        if not AC_ALERT or ac is None:
+            return
+        if ac is False:
+            self.ac_fails += 1
+            if self.ac_fails >= 2 and not self.ac_alerted:
+                self.ac_alerted = True
+                send(t("ac_lost", bat=f"{bat}%" if bat is not None else "?"))
+        else:
+            self.ac_fails = 0
+            if self.ac_alerted:
+                self.ac_alerted = False
+                send(t("ac_back"))
+
+    def check_disk(self):
+        """Wolne miejsce na / i na dysku z instancjami AMP (jesli to inny dysk)."""
+        if not DISK_WARN_GB:
+            return
+        seen = set()
+        for path in ("/", INSTANCES_DIR):
+            try:
+                dev = os.stat(path).st_dev
+                du = shutil.disk_usage(path)
+            except OSError:
+                continue
+            if dev in seen:
+                continue
+            seen.add(dev)
+            free = du.free / 1e9
+            if free < DISK_WARN_GB and dev not in self.disk_alerted:
+                self.disk_alerted.add(dev)
+                send(t("disk_low", path=esc(path), free=f"{free:.1f}", pct=int(du.used * 100 // du.total)))
+            elif free >= DISK_WARN_GB + 2 and dev in self.disk_alerted:
+                self.disk_alerted.discard(dev)
+                send(t("disk_ok", path=esc(path), free=f"{free:.0f}"))
+
     def check(self):
         # laptop stoi na zasilaczu z limitem ladowania 50%, wiec spadek ponizej progu = cos nie tak
-        _, bat = power_state()
+        ac, bat = power_state()
+        self.check_ac(ac, bat)
+        self.check_disk()
         if bat is not None and BATTERY_WARN:
             if bat < BATTERY_WARN and not self.bat_alerted:
                 self.bat_alerted = True
@@ -1443,10 +1877,12 @@ class Amp:
             for i in target.get("AvailableInstances") or []:
                 if i.get("Module") == "ADS":
                     continue
+                metrics = i.get("Metrics") if isinstance(i.get("Metrics"), dict) else {}
                 out.append({"name": i.get("InstanceName"), "id": i.get("InstanceID"),
                             "friendly": i.get("FriendlyName") or i.get("InstanceName"),
                             "module": i.get("ModuleDisplayName") or i.get("Module"),
-                            "running": bool(i.get("Running")), "state": i.get("AppState")})
+                            "running": bool(i.get("Running")), "state": i.get("AppState"),
+                            "cpu": metric(metrics, "cpu"), "mem": metric(metrics, "memory")})
         return sorted(out, key=lambda x: (x["friendly"] or "").lower())
 
     def instance_call(self, inst_id, method, **params):
@@ -1628,7 +2064,122 @@ class Amp:
                         self.GAME_COMMANDS["default"])
         return self.console(name, commands[act].format(player=player))
 
+    # komunikat do wszystkich graczy z konsoli; None = gra tego nie umie (serwer Valheima nie ma konsoli)
+    BROADCAST = {"default": "say {text}", "valheim": None}
 
+    def broadcast_command(self, inst):
+        module = (inst.get("module") or "").lower()
+        return next((c for key, c in self.BROADCAST.items() if key != "default" and key in module),
+                    self.BROADCAST["default"])
+
+    def say(self, name, text):
+        """Komunikat w grze (ostrzezenie przed restartem); False, gdy gra tego nie umie albo nie dziala."""
+        inst = self.find(name)
+        command = self.broadcast_command(inst)
+        if not command or not inst["running"] or inst["state"] != 20:
+            return False
+        self.instance_call(inst["id"], "Core/SendConsoleMessage", message=command.format(text=game_text(text)))
+        return True
+
+    def backups(self, name):
+        """Kopie instancji, najnowsze pierwsze: [{"id", "title", "when", "by", "sticky", "auto"}]."""
+        inst = self.find(name)
+        out = []
+        for b in self.instance_call(inst["id"], "LocalFileBackupPlugin/GetBackups") or []:
+            if not isinstance(b, dict) or not b.get("Id"):
+                continue
+            out.append({"id": str(b["Id"]), "title": str(b.get("Name") or b.get("Description") or "?"),
+                        "when": amp_time(b.get("Timestamp")), "by": str(b.get("TakenBy") or ""),
+                        "sticky": bool(b.get("Sticky")), "auto": bool(b.get("CreatedAutomatically"))})
+        return sorted(out, key=lambda b: b["when"] or 0, reverse=True)
+
+    def restore(self, name, backup_id):
+        inst = self.find(name)
+        return self.instance_call(inst["id"], "LocalFileBackupPlugin/RestoreBackup", BackupId=backup_id,
+                                  DeleteExistingData=False)
+
+    def apps(self):
+        """Gry, ktore AMP umie zalozyc (jak w kreatorze panelu): [{"id", "name", "module"}], bez wycofanych."""
+        out = []
+        for a in self.call("ADSModule/GetSupportedApplications") or []:
+            if not isinstance(a, dict) or not a.get("Id") or a.get("DeprecatedReason"):
+                continue
+            platforms = a.get("SupportedPlatforms")
+            if isinstance(platforms, int) and platforms and not platforms & 2:  # SupportedOS: 2 = Linux
+                continue
+            if isinstance(platforms, str) and platforms and "linux" not in platforms.lower():
+                continue
+            out.append({"id": str(a["Id"]), "name": str(a.get("FriendlyName") or a["Id"]),
+                        "module": str(a.get("ModuleName") or "")})
+        return sorted(out, key=lambda a: a["name"].lower())
+
+    def create_instance(self, spec_id, friendly):
+        """Nowa instancja na tym serwerze: AMP pobiera gre (UpdateOnce), ale jej nie uruchamia."""
+        targets = self.call("ADSModule/GetInstances") or []
+        target = next((x for x in targets if x.get("CanCreate", True) and not x.get("IsRemote")), None) \
+            or (targets[0] if targets else None)
+        if not target or not target.get("InstanceId"):
+            raise AmpError("ADS")
+        return self.call("ADSModule/CreateInstanceFromSpec", SpecId=spec_id, TargetADSInstance=target["InstanceId"],
+                         FriendlyName=friendly, PostCreate=1, StartOnBoot=True)
+
+    def endpoints(self, inst_id):
+        """Adresy/porty instancji (do tunelu playit): ["Game: 0.0.0.0:2456", ...]."""
+        try:
+            r = self.call("ADSModule/GetApplicationEndpoints", instanceId=inst_id) or []
+        except Exception as e:
+            log(f"AMP endpoints: {e}")
+            return []
+        return [f"{e.get('DisplayName') or '?'}: {e.get('Endpoint') or e.get('Uri') or '?'}"
+                for e in r if isinstance(e, dict)]
+
+
+def metric(metrics, word):
+    """Metryka instancji z AMP ("CPU Usage", "Memory Usage"): {"raw", "max", "pct", "units"} albo None."""
+    m = next((v for k, v in metrics.items() if word in str(k).lower() and isinstance(v, dict)), None)
+    if not m or m.get("RawValue") is None:
+        return None
+    raw, top = m.get("RawValue") or 0, m.get("MaxValue") or 0
+    pct = m.get("Percent")
+    if not isinstance(pct, (int, float)):
+        pct = raw * 100 / top if top else None
+    return {"raw": raw, "max": top, "pct": pct, "units": str(m.get("Units") or "")}
+
+
+def metrics_text(inst, lang=None):
+    """"📊 CPU 12% · RAM 2.1 / 8.0 GB (26%)" albo "" gdy AMP nie podaje metryk (np. instancja wylaczona)."""
+    cpu, mem = inst.get("cpu"), inst.get("mem")
+    if not inst.get("running") or not (cpu or mem):
+        return ""
+    cpu_text = f"{cpu['pct']:.0f}%" if cpu and cpu["pct"] is not None else "?"
+    ram = "?"
+    if mem:
+        scale = 1 if mem["units"].upper().startswith("GB") else 1024  # AMP podaje pamiec w MB
+        ram = f"{mem['raw'] / scale:.1f}" + (f" / {mem['max'] / scale:.1f}" if mem["max"] else "") + " GB"
+        if mem["pct"] is not None:
+            ram += f" ({mem['pct']:.0f}%)"
+    return t("srv_metrics", lang, cpu=cpu_text, ram=ram)
+
+
+def amp_time(value):
+    """Czas z AMP ("/Date(1700000000000)/" albo ISO 8601) -> sekundy od 1970 albo None."""
+    text = str(value or "")
+    m = re.search(r"/Date\((-?\d+)", text)
+    if m:
+        return int(m.group(1)) // 1000
+    # .NET pisze do 7 cyfr ulamka sekundy, a starszy Python (3.10) ich nie czyta - ucinamy ulamek
+    m = re.match(r"(\d{4}-\d\d-\d\d)[T ](\d\d:\d\d:\d\d)(?:\.\d+)?\s*(Z|[+-]\d\d:?\d\d)?$", text.strip())
+    if not m:
+        return None
+    zone = m.group(3) or ""
+    zone = "+00:00" if zone == "Z" else (zone[:3] + ":" + zone[-2:] if zone else "")
+    try:
+        return int(datetime.fromisoformat(f"{m.group(1)}T{m.group(2)}{zone}").timestamp())
+    except ValueError:
+        return None
+
+
+WARN_ACTS = ("stop", "restart", "update", "off")  # akcje, przed ktorymi mozna ostrzec graczy (WARN_SECONDS)
 # AppState z AMP -> (emoji, klucz tekstu)
 AMP_STATES = {0: ("🔴", "st_stopped"), 5: ("🟡", "st_starting"), 7: ("🟡", "st_starting"), 10: ("🟡", "st_starting"),
               20: ("🟢", "st_ready"), 30: ("🟡", "st_starting"), 40: ("🟠", "st_stopping"), 45: ("🟠", "st_stopping"),
@@ -1654,13 +2205,16 @@ class AmpWatcher:
     z paskiem postepu, edytowana w miejscu, oraz zmiany stanu instancji (start, stop, awaria).
     """
 
-    def __init__(self, amp):
-        self.amp = amp
+    def __init__(self, amp, db=None):
+        self.amp, self.db = amp, db
         self.tasks = {}  # (zrodlo, id) -> {"msg": message_id, "text": ostatni tekst, "edited": czas}
         self.states = None  # nazwa -> (running, AppState); None = jeszcze nie znamy
         self.instances = []
         self.last_tasks = self.last_states = self.last_ops = 0
         self.ops = {}  # instancja -> akcja z bota, ktorej postep pokazujemy w jednej wiadomosci
+        self.done_at = {}  # instancja -> kiedy skonczyla sie akcja z bota (jej stop to nie padniecie)
+        self.auto_starts = {}  # instancja -> czas automatycznego startu po padnieciu (CRASH_RESTART)
+        self.mem_count, self.mem_alerted = {}, set()  # pamiec serwerow blisko limitu (MEM_WARN)
 
     def task_text(self, label, task, final=None):
         inst = esc(label or t("panel"))
@@ -1675,25 +2229,133 @@ class AmpWatcher:
 
     # ---------- akcje z bota: jedna wiadomosc z postepem az do konca ----------
 
-    OP_TIMEOUT = {"update": 3600, "backup": 3600}  # sekundy; reszta 15 min
+    OP_TIMEOUT = {"update": 3600, "backup": 3600, "restore": 3600, "create": 1800}  # sekundy; reszta 15 min
     OP_EDIT_SECONDS = 5
+    WARN_AT = (30, 10)  # kolejne komunikaty w grze: tyle sekund przed akcja (pierwszy - od razu)
 
     def busy(self, name):
         op = self.ops.get(name)
         return op["act"] if op else None
 
-    def track(self, name, act, chat, lang):
-        """Po akcji z bota: wiadomosc na czacie, ktory ja zlecil (tym samym botem), edytowana az do wyniku."""
-        try:
-            friendly = self.amp.find(name)["friendly"]
-        except Exception:
-            friendly = name
+    def track(self, name, act, chat, lang, at=None, friendly=None, **extra):
+        """
+        Po akcji z bota: wiadomosc na czacie, ktory ja zlecil (tym samym botem), edytowana az do wyniku.
+        at = czas wykonania (odliczanie z ostrzezeniem graczy); extra = dane krokow (np. przywracanie kopii).
+        """
+        if friendly is None:
+            try:
+                friendly = self.amp.find(name)["friendly"]
+            except Exception:
+                friendly = name
         op = {"name": name, "act": act, "chat": chat, "lang": lang, "token": BOT["token"], "friendly": friendly,
               "started": time.time(), "seen": set(), "kicked": act != "start", "tasks_seen": False,
-              "text": None, "edited": 0}
+              "text": None, "edited": 0, "at": at, "warned": set(), **extra}
         op["text"] = self.op_text(op, None, None, None)
-        op["msg"] = send(op["text"], chat)
+        op["msg"] = send(op["text"], chat, markup=self.op_markup(op))
         self.ops[name] = op
+        return op
+
+    def op_markup(self, op):
+        if op.get("at"):  # w trakcie odliczania mozna jeszcze odwolac
+            return {"inline_keyboard": [[{"text": t("btn_cancel", op["lang"]),
+                                          "callback_data": f"dc:{op['name']}"[:64]}]]}
+        return None
+
+    def schedule(self, name, act, chat, lang, delay=None):
+        """Stop / restart / aktualizacja za `delay` s; gracze dostaja komunikat w grze od razu i potem co jakis czas."""
+        delay = WARN_SECONDS if delay is None else delay
+        op = self.track(name, act, chat, lang, at=time.time() + delay)
+        self.warn(op, delay)
+        return op
+
+    def warn(self, op, left):
+        """Komunikat w grze: pierwszy od razu, potem po przekroczeniu kazdego progu WARN_AT (kazdy raz)."""
+        due = [s for s in self.WARN_AT if left <= s and s not in op["warned"]]
+        if op["warned"] and not due:
+            return
+        op["warned"].update(s for s in self.WARN_AT if s >= left - 3)  # progi, ktore ten komunikat juz pokryl
+        op["warned"].add("first")
+        try:
+            self.amp.say(op["name"], t("gw_" + op["act"], op["lang"], s=max(1, round(left))))
+        except Exception as e:
+            log(f"AMP say {op['name']}: {e}")
+
+    def cancel(self, name):
+        """Odwolanie akcji w trakcie odliczania; False, gdy juz ruszyla (albo nic nie ma)."""
+        op = self.ops.get(name)
+        if not op or not op.get("at"):
+            return False
+        self.ops.pop(name)
+        try:
+            self.amp.say(name, t("gw_cancel", op["lang"]))
+        except Exception as e:
+            log(f"AMP say {name}: {e}")
+        with via(op["token"]):
+            if op["msg"]:
+                edit(op["chat"], op["msg"], f"✖️ <b>{esc(op['friendly'])}</b>: {t('act_' + op['act'], op['lang'])}\n"
+                     + t("op_cancelled", op["lang"]))
+        return True
+
+    def restore(self, name, backup, chat, lang):
+        """Przywracanie kopii w krokach: stop (jesli gra dziala) -> kopia obecnego stanu -> przywrocenie -> start."""
+        inst = self.amp.find(name)
+        was_running = inst["running"] and inst["state"] == 20
+        op = self.track(name, "restore", chat, lang, backup=backup, was_running=was_running, phase=None)
+        try:
+            self.restore_phase(op, "stopping" if was_running else "backup")
+        except Exception as e:
+            self.finish(op, self.op_text(op, None, None, "failed", t("amp_error", lang, err=esc(e))))
+            raise
+        return op
+
+    def finish(self, op, text):
+        """Ostatnia edycja wiadomosci akcji i koniec jej sledzenia."""
+        with via(op["token"]):
+            if op["msg"]:
+                edit(op["chat"], op["msg"], text)
+            else:
+                send(text, op["chat"])
+        self.ops.pop(op["name"], None)
+        self.done_at[op["name"]] = time.time()
+
+    def restore_phase(self, op, phase):
+        """Start kroku przywracania (wywolanie AMP) i zapamietanie, od kiedy trwa."""
+        name = op["name"]
+        if phase == "stopping":
+            self.amp.action("stop", name)
+        elif phase == "backup":
+            inst = self.amp.find(name)
+            title = f"{t('bk_safety', op['lang'])} {datetime.now():%Y-%m-%d %H:%M}"
+            self.amp.instance_call(inst["id"], "LocalFileBackupPlugin/TakeBackup", Title=title,
+                                   Description="amp-tg-bot", Sticky=False)
+        elif phase == "restoring":
+            self.amp.restore(name, op["backup"]["id"])
+        elif phase == "starting":
+            self.amp.action("start", name)
+        op.update(phase=phase, phase_started=time.time(), tasks_seen=False)
+
+    def restore_step(self, op, inst, state, busy, now):
+        """Krok przywracania -> nastepny krok albo wynik (done / failed / None = trwa)."""
+        if state == 100:
+            return "failed"
+        elapsed = now - op["phase_started"]
+        settled = not busy and (op["tasks_seen"] and elapsed > 5 or elapsed > 30)
+        phase = op["phase"]
+        if phase == "stopping" and inst["running"] and state == 0:
+            self.restore_phase(op, "backup")
+        elif phase == "backup" and settled:
+            self.restore_phase(op, "restoring")
+        elif phase == "restoring" and settled:
+            if not op["was_running"]:
+                return "done"
+            self.restore_phase(op, "starting")
+        elif phase == "starting" and state == 20:
+            return "done"
+        return None
+
+    def create(self, friendly, chat, lang):
+        """Nowa instancja: wiadomosc z postepem, az pojawi sie w panelu (klucz: "+nazwa")."""
+        return self.track("+" + friendly, "create", chat, lang, friendly=friendly)
 
     def op_text(self, op, inst, pct, result, extra=""):
         lang = op["lang"]
@@ -1703,6 +2365,10 @@ class AmpWatcher:
         if inst is not None:
             emoji, state = amp_state(inst, lang)
             lines.append(f"{emoji} {esc(state)} · {dur}")
+        if op.get("at") and not result:
+            lines.append(t("op_countdown", lang, s=max(0, round(op["at"] - time.time()))))
+        if op.get("phase") and not result:
+            lines.append("⏪ " + t("bk_phase_" + op["phase"], lang))
         if pct is not None and not result:
             lines.append(progress_bar(pct))
         if result == "done":
@@ -1740,16 +2406,44 @@ class AmpWatcher:
             return "timeout"
         return None
 
+    def show(self, op, text, now):
+        """Edycja wiadomosci akcji w trakcie (nie czesciej niz co OP_EDIT_SECONDS)."""
+        if text == op["text"] or now - op["edited"] < self.OP_EDIT_SECONDS:
+            return
+        with via(op["token"]):
+            if op["msg"]:
+                edit(op["chat"], op["msg"], text, self.op_markup(op))
+            else:
+                op["msg"] = send(text, op["chat"], markup=self.op_markup(op))
+        op.update(text=text, edited=now)
+
     def check_ops(self):
         insts = {i["name"]: i for i in self.amp.instances()}
-        tasks = self.amp.tasks(list(insts.values())) if any(op["act"] in ("update", "backup")
+        tasks = self.amp.tasks(list(insts.values())) if any(op["act"] in ("update", "backup", "restore", "create")
                                                             for op in self.ops.values()) else {}
         now = time.time()
         for name, op in list(self.ops.items()):
+            if op["act"] == "create":
+                self.check_create(op, insts, tasks, now)
+                continue
             inst = insts.get(name)
             if inst is None:
                 self.ops.pop(name)
                 continue
+            if op.get("at"):  # odliczanie z ostrzezeniem graczy
+                if now < op["at"]:
+                    self.warn(op, op["at"] - now)
+                    self.show(op, self.op_text(op, inst, None, None), now)
+                    continue
+                op["at"] = None
+                try:
+                    self.amp.action(op["act"], name)
+                except Exception as e:
+                    self.finish(op, self.op_text(op, inst, None, "failed", t("amp_error", op["lang"], err=esc(e))))
+                    continue
+                op.update(started=now, seen=set())
+                self.show(op, self.op_text(op, inst, None, None), now)
+                continue  # stan sprzed akcji nic nie mowi - wynik od nastepnego sprawdzenia
             state = inst["state"] if inst["running"] else -1
             op["seen"].add(state)
             if not op["kicked"] and inst["running"] and state == 0:  # start z wylaczonej: instancja wstala
@@ -1762,22 +2456,40 @@ class AmpWatcher:
                     if label == inst["friendly"] or name in f"{task['name']} {task['desc']}"]
             op["tasks_seen"] = op["tasks_seen"] or bool(mine)
             pct = next((task["pct"] for task in mine if task["pct"] is not None), None)
-            result = self.op_result(op, inst, state, bool(mine), now - op["started"])
             extra = ""
-            if result in ("failed", "waiting", "timeout"):
+            if op["act"] == "restore":
+                try:
+                    result = self.restore_step(op, inst, state, bool(mine), now)
+                except Exception as e:
+                    result, extra = "failed", t("amp_error", op["lang"], err=esc(e))
+                if result is None and now - op["started"] > self.OP_TIMEOUT["restore"]:
+                    result = "timeout"
+            else:
+                result = self.op_result(op, inst, state, bool(mine), now - op["started"])
+            if result in ("failed", "waiting", "timeout") and not extra:
                 tail = self.amp.console_tail(name)
                 if tail:
                     extra = t("op_console", op["lang"]) + "\n<pre>" + esc("\n".join(tail))[-1200:] + "</pre>"
             text = self.op_text(op, inst, pct, result, extra)
-            if text != op["text"] and (result or now - op["edited"] >= self.OP_EDIT_SECONDS):
-                with via(op["token"]):
-                    if op["msg"]:
-                        edit(op["chat"], op["msg"], text)
-                    else:
-                        op["msg"] = send(text, op["chat"])
-                op.update(text=text, edited=now)
             if result:
-                self.ops.pop(name)
+                self.finish(op, text)
+            else:
+                self.show(op, text, now)
+
+    def check_create(self, op, insts, tasks, now):
+        """Nowa instancja: gotowe, gdy pojawi sie w panelu (z portami do tunelu playit)."""
+        lang = op["lang"]
+        inst = next((i for i in insts.values() if i["friendly"] == op["friendly"]), None)
+        if inst is not None:
+            ports = "\n".join("🔌 " + esc(p) for p in self.amp.endpoints(inst["id"])) or t("new_ports_none", lang)
+            self.finish(op, self.op_text(op, None, None, "done", t("new_done", lang, name=esc(op["friendly"]),
+                                                                       ports=ports)))
+        elif now - op["started"] > self.OP_TIMEOUT["create"]:
+            self.finish(op, self.op_text(op, None, None, "timeout"))
+        else:
+            pct = next((task["pct"] for (label, _), task in tasks.items() if not label and task["pct"] is not None),
+                       None)
+            self.show(op, self.op_text(op, None, pct, None), now)
 
     def quiet(self, label, task=None):
         """Czy instancja ma akcje z bota - wtedy jej zadania i stany pokazuje wiadomosc tej akcji."""
@@ -1812,17 +2524,80 @@ class AmpWatcher:
             else:
                 send(text)
 
+    # w konsoli po padnieciu (stan 0 bez czyjegos stopu); stan 100 = blad wedlug AMP, to zawsze padniecie
+    CRASH_RE = re.compile(r"crash|exception|fatal|unexpected|segmentation|out of memory|exited with|killed", re.I)
+
     def check_states(self):
         self.instances = self.amp.instances()
+        FRIENDLY.update((i["name"], i["friendly"]) for i in self.instances)
+        for inst in self.instances:
+            self.check_memory(inst)
         states = {i["name"]: (i["running"], i["state"]) for i in self.instances}
         if self.states is not None:
             for inst in self.instances:
-                before = self.states.get(inst["name"])
-                if (before is not None and before != states[inst["name"]] and self.stable(inst)
-                        and inst["name"] not in self.ops):
-                    emoji, state = amp_state(inst)
-                    send(t("state_change", emoji=emoji, inst=esc(inst["friendly"]), state=esc(state)))
+                name = inst["name"]
+                before, now = self.states.get(name), states[name]
+                if before is None or before == now:
+                    continue
+                if now == (True, 20) and self.db is not None:  # serwer wstal: znajomi, ktorzy chcieli wiedziec
+                    notify_subs(self.db, name, "up", "sub_up_msg")
+                if not self.stable(inst) or name in self.ops:
+                    continue
+                if before == (True, 20) and now in ((True, 0), (True, 100)) and self.crashed(inst):
+                    continue  # padniecie ma wlasna wiadomosc
+                emoji, state = amp_state(inst)
+                send(t("state_change", emoji=emoji, inst=esc(inst["friendly"]), state=esc(state)))
         self.states = states
+
+    def check_memory(self, inst):
+        """Serwer gry blisko limitu pamieci przez 2 sprawdzenia z rzedu (ok. minuta) = alert; ponizej o 10 pkt - ok."""
+        name, mem = inst["name"], inst.get("mem")
+        if not MEM_WARN or not mem or mem["pct"] is None or not inst["running"] or inst["state"] != 20:
+            self.mem_count[name] = 0
+            return
+        if mem["pct"] >= MEM_WARN:
+            self.mem_count[name] = self.mem_count.get(name, 0) + 1
+            if self.mem_count[name] >= 2 and name not in self.mem_alerted:
+                self.mem_alerted.add(name)
+                ram = metrics_text(inst).split("RAM ", 1)[-1]
+                send(t("mem_high", inst=esc(inst["friendly"]), pct=f"{mem['pct']:.0f}", ram=esc(ram)),
+                     markup={"inline_keyboard": [[{"text": t("btn_open"), "callback_data": f"srv:{name}"[:64]}]]})
+        else:
+            self.mem_count[name] = 0
+            if name in self.mem_alerted and mem["pct"] < MEM_WARN - 10:
+                self.mem_alerted.discard(name)
+                send(t("mem_ok", inst=esc(inst["friendly"]), pct=f"{mem['pct']:.0f}"))
+
+    def crashed(self, inst):
+        """
+        Gra przestala dzialac, a nikt jej nie zatrzymal z bota: stan 100 albo slady padniecia w konsoli.
+        Alert z koncowka konsoli i przyciskiem startu; z CRASH_RESTART jeden automatyczny start na 30 min.
+        """
+        name, now = inst["name"], time.time()
+        if now - self.done_at.get(name, 0) < 2 * AMP_STATE_SECONDS + 30:
+            return False  # to byl stop / restart / aktualizacja z bota
+        tail = self.amp.console_tail(name, 8)
+        if inst["state"] != 100 and not any(self.CRASH_RE.search(line) for line in tail):
+            return False
+        emoji, state = amp_state(inst)
+        lines = [t("crash", inst=esc(inst["friendly"]), state=esc(state))]
+        if tail:
+            lines.append(t("op_console") + "\n<pre>" + esc("\n".join(tail))[-1200:] + "</pre>")
+        restart = CRASH_RESTART and (name not in self.auto_starts or now - self.auto_starts[name] > CRASH_WINDOW)
+        if CRASH_RESTART:
+            lines.append(t("crash_restarting") if restart else t("crash_again"))
+        send("\n".join(lines), markup={"inline_keyboard": [[
+            {"text": t("act_start"), "callback_data": f"do:start:{name}"[:64]},
+            {"text": t("btn_open"), "callback_data": f"srv:{name}"[:64]}]]})
+        if restart:
+            self.auto_starts[name] = now
+            try:
+                self.amp.action("start", name)
+                with via(""):
+                    self.track(name, "start", CHAT_ID, lang_for())
+            except Exception as e:
+                send(t("amp_error", err=esc(e)))
+        return True
 
     @staticmethod
     def stable(inst):
@@ -2016,9 +2791,13 @@ class ModError(Exception):
     pass
 
 
-def http_json(url, timeout=30):
-    req = urllib.request.Request(url, headers={"User-Agent": f"{GITHUB_REPO}/{VERSION} (amp-tg-bot)",
-                                               "Accept": "application/json"})
+def http_json(url, timeout=30, data=None):
+    """GET albo (z `data`) POST z JSON-em."""
+    headers = {"User-Agent": f"{GITHUB_REPO}/{VERSION} (amp-tg-bot)", "Accept": "application/json"}
+    body = None
+    if data is not None:
+        body, headers["Content-Type"] = json.dumps(data).encode(), "application/json"
+    req = urllib.request.Request(url, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
@@ -2254,6 +3033,456 @@ def install_mod_file(target, filename, path):
     return [filename]
 
 
+# ---------- aktualizacje modow ----------
+
+def file_sha1(path):
+    import hashlib
+    h = hashlib.sha1()  # noqa: S324 - Modrinth szuka plikow po SHA-1, to nie zabezpieczenie
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def modrinth_updates(target):
+    """
+    Mody .jar, ktore maja nowsza wersje na Modrinth (pod loader i wersje serwera). Szuka po SHA-1 pliku, wiec
+    dziala tez dla modow wgranych recznie. Zwraca (aktualizacje, projekty juz zainstalowane, ile modow znaleziono).
+    """
+    jars = {}
+    for _, entry in installed_mods(target):
+        try:
+            jars[file_sha1(os.path.join(target["dir"], entry))] = entry
+        except OSError:
+            continue
+    if not jars:
+        return [], set(), 0
+    data = http_json(f"{MODRINTH_API}/version_files/update", data={
+        "hashes": sorted(jars), "algorithm": "sha1", "loaders": [target["loader"]],
+        "game_versions": [target["version"]]}) or {}
+    updates, projects = [], set()
+    for sha1, v in data.items():
+        if sha1 not in jars or not isinstance(v, dict):
+            continue
+        projects.add(v.get("project_id"))
+        f = next((x for x in v.get("files", []) if x.get("primary")), (v.get("files") or [None])[0])
+        if not f or (f.get("hashes") or {}).get("sha1") == sha1:
+            continue  # najnowsza wersja to ten sam plik
+        updates.append({"entry": jars[sha1], "title": jars[sha1][:-4], "new": v.get("version_number") or "?",
+                        "filename": f["filename"], "url": f["url"], "project": v.get("project_id"),
+                        "deps": [d["project_id"] for d in v.get("dependencies", [])
+                                 if d.get("dependency_type") == "required" and d.get("project_id")]})
+    return updates, projects, len(data)
+
+
+def thunderstore_updates(target):
+    """Paczki z Thunderstore (folder plugins/Autor-Nazwa z manifest.json), ktore maja nowsza wersje."""
+    updates, found = [], 0
+    for _label, entry in installed_mods(target):
+        m = re.fullmatch(r"([A-Za-z0-9_]+)-([A-Za-z0-9_]+)", entry)
+        manifest = os.path.join(target["dir"], entry, "manifest.json")
+        if not m or not os.path.isfile(manifest):
+            continue
+        try:
+            old = json.load(open(manifest, encoding="utf-8-sig")).get("version_number") or "0"
+            latest = http_json(f"{THUNDERSTORE}/api/experimental/package/{m.group(1)}/{m.group(2)}/")["latest"]
+        except Exception as e:  # paczki spoza Thunderstore albo chwilowy blad - pomijamy
+            log(f"Thunderstore {entry}: {getattr(e, 'code', e)}")
+            continue
+        found += 1
+        new = latest.get("version_number") or "0"
+        if _version_key(new) > _version_key(old):
+            updates.append({"entry": entry, "title": f"{m.group(2)} {old}", "new": new,
+                            "package": f"{m.group(1)}/{m.group(2)}"})
+    return updates, set(), found
+
+
+def mod_updates(target):
+    """(aktualizacje, zainstalowane projekty, ile modow zna zrodlo) dla Minecrafta albo gry z BepInEx."""
+    return modrinth_updates(target) if target["game"] == "minecraft" else thunderstore_updates(target)
+
+
+def apply_mod_update(target, upd, projects):
+    """Nowa wersja moda; stara idzie do kosza (.tg-trash), brakujace wymagane zaleznosci sa doinstalowane."""
+    done = []
+    if target["game"] == "minecraft":
+        filename = os.path.basename(upd["filename"])
+        if not filename.endswith(".jar"):
+            raise ModError(filename)
+        if filename == upd["entry"]:  # ta sama nazwa pliku: najpierw stary do kosza
+            remove_mod(target, upd["entry"])
+            http_download(upd["url"], os.path.join(target["dir"], filename))
+        else:
+            http_download(upd["url"], os.path.join(target["dir"], filename))
+            remove_mod(target, upd["entry"])
+        done.append(f"{upd['title']} → {upd['new']}")
+        for dep in upd["deps"]:
+            if dep in projects:
+                continue
+            for dep_file, url, title in modrinth_files(dep, target, set(projects)):
+                if os.path.basename(dep_file) == dep_file and dep_file.endswith(".jar") \
+                        and not os.path.exists(os.path.join(target["dir"], dep_file)):
+                    http_download(url, os.path.join(target["dir"], dep_file))
+                    done.append(title)
+            projects.add(dep)
+        return done
+    files = thunderstore_files(upd["package"])
+    remove_mod(target, upd["entry"])
+    for package, url, title in files:
+        if package != files[0][0] and os.path.isdir(os.path.join(target["dir"], package)):
+            continue  # zaleznosc juz jest
+        zpath = os.path.join(os.path.dirname(target["dir"]), f".{package}.zip")
+        try:
+            http_download(url, zpath)
+            install_bepinex_zip(zpath, target["dir"], package)
+        finally:
+            if os.path.exists(zpath):
+                os.remove(zpath)
+        done.append(title)
+    return done
+
+
+class ModWatcher:
+    """Co MOD_CHECK_HOURS: nowe wersje modow we wszystkich instancjach -> wiadomosc z przyciskiem (raz na zestaw)."""
+
+    def __init__(self, db):
+        self.db = db
+        self.last = time.time() - MOD_CHECK_HOURS * 3600 + 600  # pierwsze sprawdzenie 10 min po starcie
+
+    def poll(self):
+        if not MOD_CHECK_HOURS or time.time() - self.last < MOD_CHECK_HOURS * 3600:
+            return
+        self.last = time.time()
+        for d in sorted(glob.glob(os.path.join(INSTANCES_DIR, "*", ""))):
+            name = os.path.basename(os.path.normpath(d))
+            target = mod_target(name)
+            if not target:
+                continue
+            try:
+                updates = mod_updates(target)[0]
+            except Exception as e:
+                log(f"Mody {name}: {getattr(e, 'code', e)}")
+                continue
+            signature = json.dumps(sorted(f"{u['entry']}={u['new']}" for u in updates))
+            if signature == (meta_get(self.db, f"modupd:{name}") or "[]"):
+                continue
+            meta_set(self.db, f"modupd:{name}", signature)
+            if updates:
+                listing = "\n".join(f"• {esc(u['title'])} → {esc(u['new'])}" for u in updates[:15])
+                send(t("mods_notify", inst=esc(FRIENDLY.get(name, name)), n=len(updates), list=listing),
+                     markup={"inline_keyboard": [[{"text": t("btn_mods_show"), "callback_data": f"mdu:{name}"[:64]}]]})
+
+
+# ---------- aktualizacje gier (Steam, Minecraft vanilla) ----------
+
+STEAM_REDIST = {"1007", "228980"}  # Steamworks SDK / Common Redistributables - to nie gra
+
+
+def steam_manifests(name):
+    """Gry ze SteamCMD w instancji: [(appid, buildid, galaz)] z steamapps/appmanifest_*.acf."""
+    root = os.path.join(INSTANCES_DIR, name)
+    found = []
+    for depth in ("*", "*/*", "*/*/*"):
+        for path in sorted(glob.glob(os.path.join(root, depth, "steamapps", "appmanifest_*.acf"))):
+            text = read(path, "") or ""
+            app = re.search(r'"appid"\s+"(\d+)"', text)
+            build = re.search(r'"buildid"\s+"(\d+)"', text)
+            beta = re.search(r'"BetaKey"\s+"([^"]*)"', text)
+            if app and build and app.group(1) not in STEAM_REDIST:
+                found.append((app.group(1), build.group(1), (beta.group(1) if beta else "") or "public"))
+    return found
+
+
+def steam_build(appid, branch="public"):
+    """Najnowszy build ID galezi gry na Steamie (api.steamcmd.net, bez klucza)."""
+    data = http_json(f"{STEAMCMD_API}/{appid}")
+    return str(data["data"][str(appid)]["depots"]["branches"][branch]["buildid"])
+
+
+def minecraft_vanilla_version(name):
+    """Wersja serwera Minecraft bez loadera modow (version.json w jarze) albo None."""
+    mc = os.path.join(INSTANCES_DIR, name, "Minecraft")
+    if not os.path.isdir(mc) or minecraft_loader(mc)[0]:
+        return None  # z Forge / Fabric wersje gry trzymaja mody - tej aktualizacji nie proponujemy
+    for jar in sorted(glob.glob(os.path.join(mc, "*.jar"))):
+        try:
+            with zipfile.ZipFile(jar) as z:
+                return json.loads(z.read("version.json")).get("id")
+        except (OSError, KeyError, ValueError, zipfile.BadZipFile):
+            continue
+    return None
+
+
+def game_update(name):
+    """(stara wersja, nowa wersja) gdy jest nowsza wersja gry instancji, inaczej None."""
+    for appid, build, branch in steam_manifests(name):
+        latest = steam_build(appid, branch)
+        if latest != build:
+            return f"build {build}", f"build {latest}"
+    current = minecraft_vanilla_version(name)
+    if current:
+        latest = http_json(MOJANG_MANIFEST)["latest"]["release"]
+        if latest != current and _version_key(latest) > _version_key(current):
+            return current, latest
+    return None
+
+
+class GameWatcher:
+    """
+    Co GAME_CHECK_HOURS: nowa wersja gry -> wiadomosc z przyciskiem aktualizacji (raz na wersje).
+    Z GAME_AUTO_UPDATE bot aktualizuje sam, gdy na serwerze nikt nie gra (sprawdza co minute).
+    """
+
+    def __init__(self, db, amp, watcher, instances):
+        self.db, self.amp, self.watcher, self.instances = db, amp, watcher, instances
+        self.last = time.time() - GAME_CHECK_HOURS * 3600 + 600  # pierwsze sprawdzenie 10 min po starcie
+        self.pending = {}  # instancja -> nowa wersja, czeka na pusty serwer (GAME_AUTO_UPDATE)
+        self.last_auto = 0
+
+    def poll(self):
+        now = time.time()
+        if GAME_CHECK_HOURS and now - self.last >= GAME_CHECK_HOURS * 3600:
+            self.last = now
+            self.check()
+        if self.pending and now - self.last_auto >= 60:
+            self.last_auto = now
+            self.auto_update()
+
+    def check(self):
+        for d in sorted(glob.glob(os.path.join(INSTANCES_DIR, "*", ""))):
+            name = os.path.basename(os.path.normpath(d))
+            try:
+                found = game_update(name)
+            except Exception as e:
+                log(f"Wersja gry {name}: {getattr(e, 'code', e)}")
+                continue
+            if not found:
+                continue
+            if GAME_AUTO_UPDATE:  # takze po restarcie bota, choc wiadomosc o tej wersji juz byla
+                self.pending[name] = found[1]
+            if meta_get(self.db, f"gameupd:{name}") == found[1]:
+                continue
+            meta_set(self.db, f"gameupd:{name}", found[1])
+            lines = [t("game_update", inst=esc(FRIENDLY.get(name, name)), old=esc(found[0]), new=esc(found[1]))]
+            if not found[0].startswith("build"):
+                lines.append(t("game_update_mc"))
+            if GAME_AUTO_UPDATE:
+                lines.append(t("game_update_wait"))
+            send("\n".join(lines), markup={"inline_keyboard": [[
+                {"text": t("act_update"), "callback_data": f"do:update:{name}"[:64]},
+                {"text": t("btn_open"), "callback_data": f"srv:{name}"[:64]}]]})
+
+    def auto_update(self):
+        """Aktualizacja bez ludzi: serwer pusty (wedlug logu), instancja wlaczona, zadna akcja nie trwa."""
+        for name in list(self.pending):
+            inst = self.instances.get(name)
+            if (inst and inst.online) or self.watcher.busy(name):
+                continue
+            try:
+                amp_inst = self.amp.find(name)
+                if not amp_inst["running"] or amp_inst["state"] not in (0, 20):
+                    continue
+                self.amp.action("update", name)
+            except Exception as e:
+                log(f"Auto-aktualizacja {name}: {e}")
+                continue
+            self.pending.pop(name)
+            send(t("game_update_auto"))
+            with via(""):
+                self.watcher.track(name, "update", CHAT_ID, lang_for())
+
+
+# ---------- healthcheck: bot sam melduje, ze zyje ----------
+
+class Healthcheck:
+    """Co HC_MINUTES ping do HC_URL (np. healthchecks.io); gdy panel AMP nie odpowiada - ping na /fail z powodem."""
+
+    def __init__(self, amp):
+        self.amp = amp
+        self.last = 0
+
+    def poll(self):
+        if not HC_URL or time.time() - self.last < HC_MINUTES * 60:
+            return
+        self.last = time.time()
+        url, body = HC_URL, f"amp-tg-bot {VERSION}"
+        if self.amp.configured:
+            try:
+                body += f", AMP ok ({len(self.amp.instances())})"
+            except Exception as e:
+                url, body = HC_URL + "/fail", f"amp-tg-bot {VERSION}: AMP {e}"
+        try:
+            req = urllib.request.Request(url, data=body.encode()[:1000],
+                                         headers={"User-Agent": f"amp-tg-bot/{VERSION}"})
+            urllib.request.urlopen(req, timeout=10).close()
+        except Exception as e:  # bez URL-a w logu - zawiera klucz pingu
+            log(f"Healthcheck: {getattr(e, 'code', type(e).__name__)}")
+
+
+# ---------- serwer widziany z zewnatrz (przez tunel playit) ----------
+
+TUNNEL_STATE = {}  # instancja -> {"ok", "detail", "at"}: ostatnie sprawdzenie (do widoku serwera)
+
+
+def parse_address(text):
+    """"host:port" albo "host:port udp" -> (host, port, "udp"/"tcp"/"") albo None."""
+    m = re.fullmatch(r"\s*([A-Za-z0-9.-]+|\[[0-9a-fA-F:]+\]):(\d{1,5})(?:\s+(udp|tcp))?\s*", text or "", re.I)
+    if not m or not 0 < int(m.group(2)) < 65536:
+        return None
+    return m.group(1).strip("[]"), int(m.group(2)), (m.group(3) or "").lower()
+
+
+def _varint(n):
+    out = b""
+    while True:
+        byte, n = n & 0x7F, n >> 7
+        out += bytes([byte | (0x80 if n else 0)])
+        if not n:
+            return out
+
+
+def _recv_exact(sock, n):
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            raise OSError("closed")
+        data += chunk
+    return data
+
+
+def _read_varint(sock):
+    n = shift = 0
+    while shift <= 35:
+        byte = _recv_exact(sock, 1)[0]
+        n |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return n
+        shift += 7
+    raise OSError("varint")
+
+
+def minecraft_status(host, port, timeout=4):
+    """Server List Ping (to samo, co lista serwerow w grze): {"version", "players": {"online", "max"}}."""
+    with socket.create_connection((host, port), timeout) as s:
+        s.settimeout(timeout)
+        name = host.encode()
+        handshake = b"\x00" + _varint(767) + _varint(len(name)) + name + port.to_bytes(2, "big") + b"\x01"
+        s.sendall(_varint(len(handshake)) + handshake + b"\x01\x00")
+        _read_varint(s)  # dlugosc pakietu
+        if _read_varint(s) != 0:
+            raise OSError("packet")
+        return json.loads(_recv_exact(s, _read_varint(s)).decode("utf-8", errors="replace"))
+
+
+def a2s_players(host, port, timeout=4):
+    """Zapytanie Steam A2S_INFO (UDP, port zapytan): (gracze, max)."""
+    query = b"\xff\xff\xff\xffTSource Engine Query\x00"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.settimeout(timeout)
+        s.sendto(query, (host, port))
+        data = s.recv(1400)
+        if data[4:5] == b"A":  # serwer chce "challenge" - pytamy jeszcze raz z nim
+            s.sendto(query + data[5:9], (host, port))
+            data = s.recv(1400)
+    if data[4:5] != b"I":
+        raise OSError("A2S")
+    pos = 6
+    for _ in range(4):  # nazwa, mapa, folder, gra
+        pos = data.index(b"\x00", pos) + 1
+    return data[pos + 2], data[pos + 3]
+
+
+def check_address(addr, game=None):
+    """(odpowiada, szczegoly albo blad) dla adresu z zewnatrz; Minecraft po SLP, UDP po A2S, reszta po TCP."""
+    parsed = parse_address(addr)
+    if not parsed:
+        return False, "?"
+    host, port, proto = parsed
+    try:
+        if proto == "udp":
+            players, top = a2s_players(host, port)
+            return True, f" – {players}/{top}"
+        if game == "Minecraft" and proto != "tcp":
+            st = minecraft_status(host, port)
+            players = st.get("players") or {}
+            version = (st.get("version") or {}).get("name") or ""
+            return True, (f" – {players.get('online', '?')}/{players.get('max', '?')}"
+                          + (f", {version}" if version else ""))
+        socket.create_connection((host, port), 4).close()
+        return True, ""
+    except (OSError, ValueError, IndexError) as e:
+        return False, type(e).__name__ if isinstance(e, OSError) and not str(e) else str(e)[:60]
+
+
+def tunnel_check(name, addr, game=None):
+    ok, detail = check_address(addr, game)
+    TUNNEL_STATE[name] = {"ok": ok, "detail": detail, "at": time.time()}
+    return ok, detail
+
+
+class TunnelWatcher:
+    """Co 2 min: serwery z adresem z zewnatrz (🌐 Tunel), ktore dzialaja - 3 bledy z rzedu = alert, potem 'znowu ok'."""
+
+    def __init__(self, db, amp, instances):
+        self.db, self.amp, self.instances = db, amp, instances
+        self.last = 0
+        self.fails, self.down = {}, set()
+
+    def addresses(self):
+        rows = self.db.execute("SELECT key, value FROM meta WHERE key LIKE 'tunnel:%'")
+        return {k[len("tunnel:"):]: v for k, v in rows}
+
+    def check(self, name, addr):
+        inst = self.instances.get(name)
+        return tunnel_check(name, addr, inst.game if inst else None)
+
+    def poll(self):
+        if time.time() - self.last < TUNNEL_CHECK_SECONDS:
+            return
+        self.last = time.time()
+        addresses = self.addresses()
+        if not addresses or not self.amp.configured:
+            return
+        states = {i["name"]: i for i in self.amp.instances()}
+        for name, addr in addresses.items():
+            inst = states.get(name)
+            if not inst or not inst["running"] or inst["state"] != 20:
+                self.fails[name] = 0  # serwer nie dziala - z zewnatrz tez nie odpowie, to nie wina tunelu
+                continue
+            ok, detail = self.check(name, addr)
+            if ok:
+                self.fails[name] = 0
+                if name in self.down:
+                    self.down.discard(name)
+                    send(t("tn_up", inst=esc(inst["friendly"])))
+                continue
+            self.fails[name] = self.fails.get(name, 0) + 1
+            if self.fails[name] >= 3 and name not in self.down:
+                self.down.add(name)
+                send(t("tn_down", inst=esc(inst["friendly"]), addr=esc(addr), err=esc(detail)),
+                     markup={"inline_keyboard": [[{"text": t("btn_open"), "callback_data": f"srv:{name}"[:64]}]]})
+
+
+# ---------- whitelist Minecrafta ----------
+
+MC_NICK = re.compile(r"[A-Za-z0-9_]{3,16}")
+
+
+def whitelist_info(name):
+    """{"on": whitelist wlaczona, "players": [nicki]} z whitelist.json i server.properties albo None (nie Minecraft)."""
+    mc = os.path.join(INSTANCES_DIR, name, "Minecraft")
+    if not os.path.isdir(mc):
+        return None
+    try:
+        entries = json.load(open(os.path.join(mc, "whitelist.json"), encoding="utf-8"))
+        players = sorted((str(e.get("name")) for e in entries if isinstance(e, dict) and e.get("name")), key=str.lower)
+    except (OSError, ValueError):
+        players = []
+    on = read_kvp(os.path.join(mc, "server.properties")).get("white-list", "").strip().lower() == "true"
+    return {"on": on, "players": players}
+
+
 def icon_path(name):
     """server-icon.png serwera Minecraft (inne gry nie maja ikony w liscie serwerow) albo None."""
     mc = os.path.join(INSTANCES_DIR, name, "Minecraft")
@@ -2460,7 +3689,7 @@ def amp_test():
 
 # (komenda, argumenty w /help); opisy w STRINGS["c_<komenda>"]
 COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), ("status", ""), ("history", " [N]"),
-            ("player", " NICK"), ("week", ""), ("dota", " [add ID]"), ("lang", ""),
+            ("player", " NICK"), ("week", ""), ("dota", " [add ID]"), ("bridge", " INSTANCE|off"), ("lang", ""),
             ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
 FRIEND_COMMANDS = [("servers", ""), ("online", ""), ("history", " [N]"), ("week", "")]
@@ -2468,6 +3697,12 @@ FRIEND_COMMANDS = [("servers", ""), ("online", ""), ("history", " [N]"), ("week"
 # stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
 SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
 SETTINGS_PAGE = 10
+# przyciski /servers: srv (serwer), do / do! (akcja / potwierdzona), dw (z ostrzezeniem graczy), dc (odwolaj),
+# pl/pa/pa! (gracze), con (konsola), pw (hasla), ub (unban), md* (mody, mdu/mdU/mdx - aktualizacje), ic (ikona),
+# bk/bkr/bk! (kopie i przywracanie), sub (subskrypcje znajomego), nw/nw! (nowa instancja)
+SERVER_BUTTONS = ("srv:", "do:", "do!:", "dw:", "dc:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:", "pws:", "pw!:",
+                  "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:", "mdu:", "mdU:", "mdx:", "ic:", "bk:", "bkr:", "bk!:",
+                  "sub:", "nw:", "nw!:", "wl:", "wla:", "wlr:", "wlt:", "tn:", "tnc:")
 # ustawienia, ktorych znajomy nie widzi: argumenty Javy / linia startowa / sciezki / pobieranie = uruchomienie
 # dowolnego kodu na maszynie; porty, IP, RCON, Steam, typ i wersja serwera, mody, pamiec, kopie, harmonogram
 FRIEND_SETTINGS_DENY = re.compile(
@@ -2653,6 +3888,7 @@ class Commands:
         self.scope = None  # None = admin; zbior instancji = znajomy, ktorego wiadomosc wlasnie obslugujemy
         self.watcher = None  # AmpWatcher: postep akcji z bota (ustawiany w run())
         self.chat_key = ""  # czat, ktorego edytor ustawien wlasnie obslugujemy (klucz w self.cache)
+        self.uid = None  # kto kliknal (subskrypcje znajomego w widoku serwera)
 
     def poll(self, timeout, token=""):
         """Czeka na wiadomosci do `timeout` sekund (zastepuje sleep w glownej petli); token = bot znajomych."""
@@ -2697,6 +3933,9 @@ class Commands:
                     self.handle_document(msg)
                 elif msg and msg.get("text") and str(msg["chat"]["id"]) in self.awaiting:
                     self.handle_text(msg)
+                elif (msg and msg.get("text") and not token and str(msg["chat"]["id"]) in BRIDGES.values()
+                      and time.time() - msg.get("date", 0) < 120):
+                    self.bridge_to_game(msg)  # grupa z mostem czatu: wiadomosc idzie do gry
             except Exception as e:
                 log(f"Blad obslugi {upd.get('update_id')}: {e}")
                 chat = (msg or upd.get("callback_query", {}).get("message", {})).get("chat", {}).get("id")
@@ -2729,6 +3968,7 @@ class Commands:
 
     def friend_scope(self, user):
         """None dla admina, zbior instancji dla znajomego, False dla obcego."""
+        self.uid = user.get("id")  # kto teraz pisze/klika (jego subskrypcje w widoku serwera)
         if user.get("id") in ADMINS:
             return None
         if FRIENDS_TOKEN and not self.friend_bot:  # glowny bot jest tylko admina
@@ -2791,6 +4031,8 @@ class Commands:
             self.unban_command(chat, args, lang)
         elif cmd == "dota":
             self.dota_command(chat, args, lang)
+        elif cmd in ("bridge", "most"):
+            self.bridge_command(chat, args, lang)
         elif cmd == "lang":
             self.lang_command(chat, args, lang)
         elif cmd == "version":
@@ -2827,6 +4069,41 @@ class Commands:
         rows = [[{"text": f"♻️ {i['friendly']}", "callback_data": f"ub!:{i['name']}"[:64]}] for i in insts]
         send(t("ub_pick", lang, player=esc(player)), chat,
              markup={"inline_keyboard": rows + [[self.btn("btn_cancel", "srv", lang)]]})
+
+    def bridge_command(self, chat, args, lang):
+        """/bridge NAZWA w grupie: czat tej instancji Minecrafta <-> ta grupa; /bridge off - wylacza."""
+        mine = sorted(n for n, i in self.instances.items() if i.game == "Minecraft")
+        if not args:
+            now = next((f"{esc(i)} ↔ {esc(c)}" for i, c in BRIDGES.items() if c == str(chat)), t("bridge_none", lang))
+            send(t("bridge_usage", lang, now=now), chat)
+        elif args[0].lower() in ("off", "stop", "wyłącz", "wylacz"):
+            bridge_set(self.db, chat, None)
+            send(t("bridge_off", lang), chat)
+        elif args[0] in mine:
+            bridge_set(self.db, chat, args[0])
+            send(t("bridge_set", lang, name=esc(FRIENDLY.get(args[0], args[0]))), chat)
+        else:
+            send(t("bridge_bad", lang, name=esc(args[0]), list=esc(", ".join(mine) or t("nothing", lang))), chat)
+
+    def bridge_to_game(self, msg):
+        """Wiadomosc z grupy z mostem -> czat Minecrafta (tellraw: tekst jako JSON, bez wstrzykniecia komendy)."""
+        name = next((i for i, c in BRIDGES.items() if c == str(msg["chat"]["id"])), None)
+        user = msg.get("from", {})
+        if not name or user.get("is_bot") or not self.amp.configured:
+            return
+        who = game_text(user.get("first_name") or user.get("username") or "?", 32)
+        text = game_text(msg["text"])
+        if not text:
+            return
+        try:
+            inst = self.amp.find(name)
+            if not inst["running"] or inst["state"] != 20:
+                return
+            line = json.dumps(["", {"text": "[TG] ", "color": "aqua"}, {"text": f"{who}: ", "color": "gray"},
+                               {"text": text}], ensure_ascii=False)
+            self.amp.instance_call(inst["id"], "Core/SendConsoleMessage", message=f"tellraw @a {line}")
+        except Exception as e:
+            log(f"Most czatu {name}: {e}")
 
     def dota_view(self, lang):
         rows = [[{"text": f"🗑 {name}"[:60], "callback_data": f"dr:{acc}"}]
@@ -2917,9 +4194,7 @@ class Commands:
             except Exception:
                 pass
             self.set_lang(chat, lang, announce=False)
-        elif data == "srv" or data.startswith(("srv:", "do:", "do!:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:",
-                                               "pws:", "pw!:", "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:", "ic:")
-                                              + SETTINGS_KINDS):
+        elif data in ("srv", "new") or data.startswith(SERVER_BUTTONS + SETTINGS_KINDS):
             lang = lang_for(chat)
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
@@ -2929,7 +4204,8 @@ class Commands:
         if data.startswith("lang:") or data == "srv":
             return True
         kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "pl", "pa", "pa!", "ub", "ub!", "ic") + tuple(
+        if kind not in ("srv", "do", "do!", "dw", "dc", "pl", "pa", "pa!", "ub", "ub!", "ic", "sub", "wl", "wla", "wlr",
+                        "wlt") + tuple(
                 k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
@@ -3030,15 +4306,16 @@ class Commands:
             return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]}
         if self.scope is not None:  # znajomy widzi tylko przydzielone instancje
             insts = [i for i in insts if i["name"] in self.scope]
+        new = [self.btn("btn_new", "new", lang)] if self.scope is None else []  # nowa instancja: tylko admin
         if not insts:
-            return t("srv_none", lang), None
+            return t("srv_none", lang), ({"inline_keyboard": [new]} if new else None)
         rows = []
         for i in insts:
             emoji, _ = amp_state(i, lang)
             n = self.players_on(i["name"])
             rows.append([{"text": f"{emoji} {i['friendly']}" + (f" 👥{n}" if n else ""),
                           "callback_data": f"srv:{i['name']}"[:64]}])
-        rows.append([self.btn("btn_refresh", "srv", lang)])
+        rows.append([self.btn("btn_refresh", "srv", lang)] + new)
         return t("srv_title", lang), {"inline_keyboard": rows}
 
     @staticmethod
@@ -3050,7 +4327,7 @@ class Commands:
         self.scope = self.friend_scope(user)
         wait = self.awaiting.get(str(chat), {})
         if self.scope is False or (self.scope is not None and (
-                wait.get("kind") not in ("setting", "setting_search", "unban")
+                wait.get("kind") not in ("setting", "setting_search", "unban", "whitelist")
                 or wait.get("name") not in self.scope)):
             return
         lang = lang_for(chat)
@@ -3075,6 +4352,20 @@ class Commands:
             send(text, chat, markup=markup)
         elif wait["kind"] == "setting_search":
             text, markup = self.search_settings(chat, wait["name"], text, lang)
+            send(text, chat, markup=markup)
+        elif wait["kind"] in ("new_app", "new_name"):
+            text, markup = self.new_text(chat, wait, text, lang)
+            send(text, chat, markup=markup)
+        elif wait["kind"] == "tunnel":
+            text, markup = self.tunnel_text(chat, wait["name"], text, lang)
+            send(text, chat, markup=markup)
+        elif wait["kind"] == "whitelist":
+            if MC_NICK.fullmatch(text):
+                text, markup = self.whitelist_command(user, chat, wait["name"], f"whitelist add {text}", lang)
+            else:
+                self.awaiting[str(chat)] = wait
+                text, markup = t("wl_bad", lang), {"inline_keyboard": [[self.btn("btn_cancel", f"wl:{wait['name']}",
+                                                                                 lang)]]}
             send(text, chat, markup=markup)
         elif wait["kind"] == "password":
             try:  # haslo nie zostaje w historii czatu
@@ -3102,6 +4393,8 @@ class Commands:
             return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [back]}
         self.cache[(str(chat), "players", name)] = players
         unban = [self.btn("act_unban", f"ub:{name}", lang)]
+        if whitelist_info(name) is not None:  # Minecraft: whitelist obok unbana
+            unban.append(self.btn("btn_whitelist", f"wl:{name}", lang))
         if not players:
             return t("pl_title", lang, name=esc(name)) + "\n" + t("pl_none", lang), {"inline_keyboard": [unban, back]}
         rows = [[{"text": f"👤 {p}", "callback_data": "noop"},
@@ -3207,9 +4500,41 @@ class Commands:
             lines += ["", note]
         rows = [[{"text": f"🗑 {label}"[:60], "callback_data": f"mdr:{i}:{name}"[:64]}]
                 for i, (label, _) in enumerate(mods[:40])]
-        rows += [[self.btn("btn_mod_add", f"mda:{name}", lang), self.btn("act_restart", f"do:restart:{name}", lang)],
-                 back]
+        rows += [[self.btn("btn_mod_add", f"mda:{name}", lang), self.btn("btn_mod_check", f"mdu:{name}", lang)],
+                 [self.btn("act_restart", f"do:restart:{name}", lang)], back]
         return "\n".join(lines), {"inline_keyboard": rows}
+
+    def mod_updates_view(self, name, target, lang):
+        """Sprawdzenie nowych wersji (siec): lista z przyciskami albo 'wszystko aktualne'."""
+        try:
+            updates, projects, found = mod_updates(target)
+        except Exception as e:
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+        self.cache[(self.chat_key, "modupd", name)] = (updates, projects)
+        if not updates:
+            return self.mods_view(name, lang, note=t("mod_upd_none", lang, n=found, source=target["source"]))
+        lines = [t("mod_upd_title", lang, name=esc(name), n=len(updates))]
+        lines += [f"• {esc(u['title'])} → <b>{esc(u['new'])}</b>" for u in updates[:30]]
+        rows = [[{"text": f"⬆️ {u['title']} → {u['new']}"[:60], "callback_data": f"mdx:{i}:{name}"[:64]}]
+                for i, u in enumerate(updates[:30])]
+        rows += [[{"text": t("btn_mod_upd_all", lang, n=len(updates)), "callback_data": f"mdU:{name}"[:64]}],
+                 [self.btn("btn_back", f"md:{name}", lang)]]
+        return "\n".join(lines), {"inline_keyboard": rows}
+
+    def mod_update_apply(self, user, chat, name, target, picked, projects, lang):
+        send(t("mod_working", lang, mod=esc(", ".join(u["title"] for u in picked))), chat)
+        done, errors = [], []
+        for u in picked:
+            try:
+                done += apply_mod_update(target, u, projects)
+            except Exception as e:  # jeden zly mod nie zatrzymuje reszty
+                errors.append(f"{u['title']}: {getattr(e, 'reason', e)}")
+        self.cache.pop((self.chat_key, "modupd", name), None)
+        if done:
+            self.audit(user, chat, "🧩 ⬆️ " + ", ".join(done), name)
+        notes = ([t("mod_upd_done", lang, list=esc(", ".join(done))), t("mod_restart", lang)] if done else []) \
+            + [t("mod_error", lang, err=esc(e)) for e in errors]
+        return self.mods_view(name, lang, note="\n".join(notes))
 
     def mods_callback(self, kind, rest, user, chat, lang):
         self.chat_key = str(chat)
@@ -3222,7 +4547,18 @@ class Commands:
             self.awaiting[self.chat_key] = {"kind": "mod", "name": name}
             return (t("mod_prompt", lang, types=target["types"], source=target["source"]),
                     {"inline_keyboard": [[self.btn("btn_cancel", f"md:{name}", lang)]]})
+        if kind == "mdu":
+            return self.mod_updates_view(name, target, lang)
         idx = int(parts[0]) if parts[0].isdigit() else -1
+        if kind in ("mdU", "mdx"):
+            cached = self.cache.get((self.chat_key, "modupd", name))
+            if not cached:
+                return self.mod_updates_view(name, target, lang)
+            updates, projects = cached
+            picked = updates if kind == "mdU" else updates[idx:idx + 1] if 0 <= idx < len(updates) else []
+            if not picked:
+                return self.mod_updates_view(name, target, lang)
+            return self.mod_update_apply(user, chat, name, target, picked, projects, lang)
         if kind == "mdr":
             entries = self.cache.get((self.chat_key, "mods", name)) or []
             if not 0 <= idx < len(entries):
@@ -3506,6 +4842,12 @@ class Commands:
         emoji, state = amp_state(inst, lang)
         lines = [f"{emoji} <b>{esc(inst['friendly'])}</b>", f"🎮 {esc(inst['module'] or '?')} · {esc(state)}",
                  t("srv_players", lang, n=self.players_on(name))]
+        if metrics_text(inst, lang):
+            lines.append(metrics_text(inst, lang))
+        tunnel = TUNNEL_STATE.get(name)
+        if tunnel and inst["running"] and inst["state"] == 20:
+            lines.append(t("tn_ok", lang, detail=esc(tunnel["detail"])) if tunnel["ok"]
+                         else t("tn_fail", lang, err=esc(tunnel["detail"])))
         if note:
             lines += ["", note]
         state = inst["state"] if inst["running"] else -1
@@ -3528,8 +4870,16 @@ class Commands:
                      + ([self.btn("btn_password", f"pw:{name}", lang)] if self.scope is None else [])]
         extra = ([self.btn("btn_mods", f"md:{name}", lang)] if self.scope is None and mod_target(name) else []) \
             + ([self.btn("btn_icon", f"ic:{name}", lang)] if icon_path(name) else [])  # mody tylko dla admina
+        if self.scope is None and inst["running"]:  # przywracanie kopii nadpisuje swiat - tylko admin
+            extra.append(self.btn("btn_backups", f"bk:{name}", lang))
+        if self.scope is None:
+            extra.append(self.btn("btn_tunnel", f"tn:{name}", lang))
         if extra:
-            rows.append(extra)
+            rows += [extra[i:i + 3] for i in range(0, len(extra), 3)]
+        if self.scope is not None and self.uid:  # znajomy: powiadomienia o tym serwerze
+            mine = subs_of(self.db, self.uid, name)
+            rows.append([{"text": t("btn_sub_" + k, lang, mark="🔔" if k in mine else "🔕"),
+                          "callback_data": f"sub:{k}:{name}"[:64]} for k in SUB_KINDS])
         if inst["running"]:
             rows.append(row("off"))
         rows += [[self.btn("btn_refresh", f"srv:{name}", lang), self.btn("btn_back", "srv", lang)]]
@@ -3540,6 +4890,8 @@ class Commands:
             return t("amp_off", lang), None
         if data == "srv":
             return self.servers_view(lang)
+        if data == "new" or data.startswith(("nw:", "nw!:")):
+            return self.new_callback(data, user, chat, lang) if self.scope is None else self.servers_view(lang)
         kind, _, rest = data.partition(":")
         if kind == "srv":
             return self.server_view(rest, lang)
@@ -3550,10 +4902,29 @@ class Commands:
             resize = t("icon_resize", lang) if can_resize() else ""
             return (t("icon_prompt", lang, resize=resize),
                     {"inline_keyboard": [[self.btn("btn_cancel", f"srv:{rest}", lang)]]})
-        if kind in ("md", "mda", "mdr", "mdi"):
+        if kind in ("md", "mda", "mdr", "mdi", "mdu", "mdU", "mdx"):
             return self.mods_callback(kind, rest, user, chat, lang) if self.scope is None else self.servers_view(lang)
+        if kind in ("bk", "bkr", "bk!"):
+            return self.backups_callback(kind, rest, user, chat, lang) if self.scope is None else \
+                self.servers_view(lang)
         if kind + ":" in SETTINGS_KINDS:
             return self.settings_callback(data, user, chat, lang)
+        if kind in ("wl", "wla", "wlr", "wlt"):
+            return self.whitelist_callback(kind, rest, user, chat, lang)
+        if kind in ("tn", "tnc"):
+            return self.tunnel_callback(kind, rest, chat, lang) if self.scope is None else self.servers_view(lang)
+        if kind == "sub":
+            what, _, name = rest.partition(":")
+            if self.scope is None or what not in SUB_KINDS or not self.uid:
+                return self.server_view(name, lang)
+            on = sub_toggle(self.db, self.uid, name, what)
+            label = t("btn_sub_" + what, lang, mark="").strip()
+            return self.server_view(name, lang, note=t("sub_on" if on else "sub_off", lang, what=label))
+        if kind == "dc":
+            done = self.watcher.cancel(rest) if self.watcher else False
+            if done:
+                self.audit(user, chat, t("op_cancelled"), rest)
+            return self.server_view(rest, lang, note=t("op_cancelled" if done else "op_cancel_late", lang))
         act, _, name = rest.partition(":")
         if act not in Amp.ACTIONS:
             return self.servers_view(lang)
@@ -3562,12 +4933,11 @@ class Commands:
         if running:  # drugie klikniecie w trakcie - nic nie wysylamy drugi raz
             return self.server_view(name, lang, note=t("op_busy", lang, action=t("act_" + running, lang)))
         if kind == "do" and act not in ("on", "start", "backup"):  # reszta wymaga potwierdzenia
-            text = t("srv_confirm", lang, action=label, name=esc(name))
-            n = self.players_on(name)
-            if n:
-                text += "\n" + t("srv_confirm_players", lang, n=n)
-            return text, {"inline_keyboard": [[self.btn("btn_yes", f"do!:{act}:{name}", lang),
-                                               self.btn("btn_back", f"srv:{name}", lang)]]}
+            return self.confirm_view(act, name, lang)
+        if kind == "dw" and act in WARN_ACTS and self.watcher:  # najpierw komunikat w grze, akcja po odliczaniu
+            self.watcher.schedule(name, act, chat, lang)
+            self.audit(user, chat, f"{t('act_' + act)} ({WARN_SECONDS} s)", name)
+            return self.server_view(name, lang, note=t("op_scheduled", lang, action=label, s=WARN_SECONDS))
         try:
             self.amp.action(act, name)
         except Exception as e:
@@ -3577,6 +4947,194 @@ class Commands:
             self.watcher.track(name, act, chat, lang)
             return self.server_view(name, lang, note=t("op_started", lang, action=label))
         return self.server_view(name, lang, note=t("srv_done", lang, action=label, name=esc(name)))
+
+    def confirm_view(self, act, name, lang):
+        """Potwierdzenie stop / restart / aktualizacji; gdy ktos gra - wybor: z ostrzezeniem w grze albo od razu."""
+        text = t("srv_confirm", lang, action=t("act_" + act, lang), name=esc(name))
+        back = [self.btn("btn_back", f"srv:{name}", lang)]
+        n = self.players_on(name)
+        if not n:
+            return text, {"inline_keyboard": [[self.btn("btn_yes", f"do!:{act}:{name}", lang)] + back]}
+        text += "\n" + t("srv_confirm_players", lang, n=n)
+        can_warn = False
+        if WARN_SECONDS and act in WARN_ACTS:
+            try:
+                can_warn = bool(self.amp.broadcast_command(self.amp.find(name)))
+            except Exception as e:
+                log(f"AMP {name}: {e}")
+            if not can_warn:
+                text += "\n" + t("warn_none", lang)
+        if not can_warn:
+            return text, {"inline_keyboard": [[self.btn("btn_yes", f"do!:{act}:{name}", lang)] + back]}
+        return text, {"inline_keyboard": [
+            [{"text": t("btn_warn", lang, s=WARN_SECONDS), "callback_data": f"dw:{act}:{name}"[:64]}],
+            [self.btn("btn_now", f"do!:{act}:{name}", lang)], back]}
+
+    # ---------- whitelist Minecrafta (admin i znajomi na swoich serwerach) ----------
+
+    def whitelist_view(self, name, chat, lang, note=""):
+        info = whitelist_info(name)
+        if info is None:
+            return self.server_view(name, lang)
+        self.cache[(str(chat), "wl", name)] = info["players"]
+        lines = [t("wl_title", lang, name=esc(name), state=t("wl_on" if info["on"] else "wl_off", lang))]
+        if not info["players"]:
+            lines.append(t("wl_empty", lang))
+        if note:
+            lines += ["", note]
+        rows = [[{"text": f"🗑 {p}"[:60], "callback_data": f"wlr:{i}:{name}"[:64]}]
+                for i, p in enumerate(info["players"][:40])]
+        rows += [[self.btn("btn_wl_add", f"wla:{name}", lang),
+                  self.btn("btn_wl_off" if info["on"] else "btn_wl_on", f"wlt:{name}", lang)],
+                 [self.btn("btn_back", f"pl:{name}", lang)]]
+        return "\n".join(lines), {"inline_keyboard": rows}
+
+    def whitelist_command(self, user, chat, name, command, lang):
+        """Komenda whitelist w konsoli gry (serwer musi dzialac); widok whitelisty z odpowiedzia serwera."""
+        try:
+            inst = self.amp.find(name)
+            if not inst["running"] or inst["state"] != 20:
+                return self.whitelist_view(name, chat, lang, note=t("wl_need_running", lang))
+            out = self.amp.console(name, command)
+        except Exception as e:
+            return self.whitelist_view(name, chat, lang, note=t("amp_error", lang, err=esc(e)))
+        self.audit(user, chat, f"📋 {command}", name)
+        return self.whitelist_view(name, chat, lang, note=self.console_note(out, lang))
+
+    def whitelist_callback(self, kind, rest, user, chat, lang):
+        idx, _, name = rest.partition(":") if kind == "wlr" else ("", "", rest)
+        info = whitelist_info(name)
+        if info is None:
+            return self.server_view(name, lang)
+        if kind == "wl":
+            return self.whitelist_view(name, chat, lang)
+        if kind == "wla":
+            self.awaiting[str(chat)] = {"kind": "whitelist", "name": name}
+            return t("wl_prompt", lang, name=esc(name)), {"inline_keyboard": [[self.btn("btn_cancel", f"wl:{name}",
+                                                                                        lang)]]}
+        if kind == "wlt":
+            return self.whitelist_command(user, chat, name, "whitelist off" if info["on"] else "whitelist on", lang)
+        players = self.cache.get((str(chat), "wl", name)) or []
+        if not idx.isdigit() or int(idx) >= len(players) or not MC_NICK.fullmatch(players[int(idx)]):
+            return self.whitelist_view(name, chat, lang)
+        return self.whitelist_command(user, chat, name, f"whitelist remove {players[int(idx)]}", lang)
+
+    # ---------- adres z zewnatrz (tunel playit) - tylko admin ----------
+
+    def tunnel_callback(self, kind, name, chat, lang):
+        addr = meta_get(self.db, f"tunnel:{name}")
+        inst = self.instances.get(name)
+        if kind == "tnc" and addr:
+            ok, detail = tunnel_check(name, addr, inst.game if inst else None)
+            return self.server_view(name, lang, note=t("tn_ok", lang, detail=esc(detail)) if ok
+                                    else t("tn_fail", lang, err=esc(detail)))
+        self.awaiting[str(chat)] = {"kind": "tunnel", "name": name}
+        now = f"<code>{esc(addr)}</code>" if addr else t("bridge_none", lang)
+        rows = ([[self.btn("btn_check_now", f"tnc:{name}", lang)]] if addr else []) \
+            + [[self.btn("btn_cancel", f"srv:{name}", lang)]]
+        return t("tn_prompt", lang, name=esc(name), now=now), {"inline_keyboard": rows}
+
+    def tunnel_text(self, chat, name, text, lang):
+        if text in ("-", "."):
+            self.db.execute("DELETE FROM meta WHERE key=?", (f"tunnel:{name}",))
+            self.db.commit()
+            TUNNEL_STATE.pop(name, None)
+            return self.server_view(name, lang, note=t("tn_removed", lang))
+        if not parse_address(text):
+            self.awaiting[str(chat)] = {"kind": "tunnel", "name": name}
+            return t("tn_bad", lang), {"inline_keyboard": [[self.btn("btn_cancel", f"srv:{name}", lang)]]}
+        meta_set(self.db, f"tunnel:{name}", text.strip())
+        inst = self.instances.get(name)
+        ok, detail = tunnel_check(name, text, inst.game if inst else None)
+        result = t("tn_ok", lang, detail=esc(detail)) if ok else t("tn_fail", lang, err=esc(detail))
+        return self.server_view(name, lang, note=t("tn_saved", lang) + "\n" + result)
+
+    # ---------- kopie: lista i przywracanie (tylko admin) ----------
+
+    def backups_callback(self, kind, rest, user, chat, lang):
+        idx, _, name = rest.partition(":") if kind != "bk" else ("", "", rest)
+        back = [self.btn("btn_back", f"srv:{name}", lang)]
+        key = (str(chat), "bk", name)
+        if kind == "bk" or key not in self.cache:
+            try:
+                self.cache[key] = self.amp.backups(name)[:15]
+            except Exception as e:
+                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+        backups = self.cache[key]
+        if kind == "bk" or not idx.isdigit() or int(idx) >= len(backups):
+            if not backups:
+                return t("bk_title", lang, name=esc(name)) + "\n" + t("bk_none", lang), {"inline_keyboard": [back]}
+            rows = [[{"text": f"{'📌 ' if b['sticky'] else ''}{ts(b['when'])} · {b['title']}"[:60],
+                      "callback_data": f"bkr:{i}:{name}"[:64]}] for i, b in enumerate(backups)]
+            return t("bk_title", lang, name=esc(name)), {"inline_keyboard": rows + [back]}
+        b = backups[int(idx)]
+        if kind == "bkr":
+            return (t("bk_confirm", lang, name=esc(name), when=ts(b["when"]), title=esc(b["title"])),
+                    {"inline_keyboard": [[self.btn("btn_restore", f"bk!:{idx}:{name}", lang)],
+                                         [self.btn("btn_back", f"bk:{name}", lang)]]})
+        running = self.watcher.busy(name) if self.watcher else None
+        if running or not self.watcher:
+            return self.server_view(name, lang, note=t("op_busy", lang, action=t("act_" + (running or "restore"),
+                                                                                  lang)))
+        try:
+            self.watcher.restore(name, b, chat, lang)
+        except Exception as e:
+            return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+        self.audit(user, chat, f"{t('act_restore')}: {ts(b['when'])} {b['title']}", name)
+        self.cache.pop(key, None)
+        return self.server_view(name, lang, note=t("op_started", lang, action=t("act_restore", lang)))
+
+    # ---------- nowa instancja (tylko admin) ----------
+
+    def new_callback(self, data, user, chat, lang):
+        cancel = [[self.btn("btn_cancel", "srv", lang)]]
+        if data == "new":
+            self.awaiting[str(chat)] = {"kind": "new_app"}
+            return t("new_prompt", lang), {"inline_keyboard": cancel}
+        kind, _, idx = data.partition(":")
+        apps = self.cache.get((str(chat), "apps")) or []
+        if kind == "nw":
+            if not idx.isdigit() or int(idx) >= len(apps):
+                return self.servers_view(lang)
+            app = apps[int(idx)]
+            self.awaiting[str(chat)] = {"kind": "new_name", "app": app}
+            return t("new_name", lang, app=esc(app["name"])), {"inline_keyboard": cancel}
+        wait = self.awaiting.pop(str(chat), None)
+        if not wait or wait.get("kind") != "new_ready":
+            return self.servers_view(lang)
+        try:
+            self.amp.create_instance(wait["app"]["id"], wait["name"])
+        except Exception as e:
+            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
+        self.audit(user, chat, f"{t('act_create')}: {wait['app']['name']}", wait["name"])
+        if self.watcher:
+            self.watcher.create(wait["name"], chat, lang)
+        text, markup = self.servers_view(lang)
+        return t("op_started", lang, action=t("act_create", lang)) + "\n\n" + text, markup
+
+    def new_text(self, chat, wait, text, lang):
+        """Tekst po ➕: najpierw nazwa gry (lista do wyboru), potem nazwa nowej instancji (potwierdzenie)."""
+        cancel = [self.btn("btn_cancel", "srv", lang)]
+        if wait["kind"] == "new_app":
+            try:
+                apps = self.amp.apps()
+            except Exception as e:
+                return t("amp_error", lang, err=esc(e)), None
+            q = text.lower()
+            found = [a for a in apps if q in f"{a['name']} {a['module']}".lower()][:10]
+            if not found:
+                self.awaiting[str(chat)] = {"kind": "new_app"}
+                return t("new_nothing", lang, q=esc(text)), {"inline_keyboard": [cancel]}
+            self.cache[(str(chat), "apps")] = found
+            rows = [[{"text": a["name"][:60], "callback_data": f"nw:{i}"}] for i, a in enumerate(found)]
+            return t("new_results", lang, q=esc(text)), {"inline_keyboard": rows + [cancel]}
+        name = game_text(text, 100)
+        if not 1 <= len(name) <= 40:
+            self.awaiting[str(chat)] = wait
+            return t("new_bad_name", lang), {"inline_keyboard": [cancel]}
+        self.awaiting[str(chat)] = {"kind": "new_ready", "app": wait["app"], "name": name}
+        return (t("new_confirm", lang, name=esc(name), app=esc(wait["app"]["name"])),
+                {"inline_keyboard": [[self.btn("btn_yes", "nw!:go", lang)] + cancel]})
 
     def set_lang(self, chat, lang, announce=True):
         meta_set(self.db, f"lang:{chat}", lang)
@@ -3621,13 +5179,18 @@ class Commands:
 def run():
     db = open_db()
     load_langs(db)
+    load_bridges(db)
     instances = {}
     host = HostMonitor()
     commands = Commands(db, instances)
-    amp_watch = AmpWatcher(commands.amp)
+    amp_watch = AmpWatcher(commands.amp, db)
     commands.watcher = amp_watch
     updates = UpdateMonitor(commands.amp, db)
     dota = DotaWatcher(db)
+    mods = ModWatcher(db)
+    games = GameWatcher(db, commands.amp, amp_watch, instances)
+    tunnels = TunnelWatcher(db, commands.amp, instances)
+    health = Healthcheck(commands.amp)
     startup = True
     last_scan = last_clean = last_host = 0
     log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
@@ -3702,6 +5265,11 @@ def run():
             dota.poll()
         except Exception as e:
             log(f"Dota: {e}")
+        for watcher, label in ((mods, "Mody"), (games, "Wersje gier"), (tunnels, "Tunele"), (health, "Healthcheck")):
+            try:
+                watcher.poll()
+            except Exception as e:
+                log(f"{label}: {e}")
         if FRIENDS_TOKEN:  # dwa boty na zmiane, kazdy krotko
             commands.poll(1)
             commands.poll(1, FRIENDS_TOKEN)

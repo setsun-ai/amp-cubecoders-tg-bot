@@ -24,8 +24,8 @@
 - **🆕 New player**: an alert when someone the bot has never seen joins.
 - **💀 Deaths** (Valheim, Minecraft) with a daily counter.
 - **Weekly summary** on Sunday evening: play time per game, top players, the busiest hour.
-- **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats or the [playit.gg](https://playit.gg) tunnel goes down.
-- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/friends`, `/updates`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/dota`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
+- **The machine**: alerts when the laptop battery drops below a threshold, the CPU overheats, the [playit.gg](https://playit.gg) tunnel goes down, the charger is unplugged (after about a minute) or disk space runs low (`DISK_WARN_GB`).
+- **Commands** (admin only, in the Telegram *Menu* button): `/online`, `/servers`, `/friends`, `/updates`, `/status`, `/history [N]`, `/player NAME`, `/week`, `/dota`, `/bridge`, `/lang`, `/version`, `/update`, `/rollback`, `/help`.
 - **Server control** (`/servers`): start, stop, restart, game update and backup of AMP instances, the list of players online with kick and ban, the game console (with the server's answer) and the server password – all with buttons, with a confirmation and a warning when someone is playing. Needs a separate AMP user for the bot (`AMP_URL`, `AMP_USER`, `AMP_PASS`); check it with `python3 /opt/amp-tg-bot/bot.py --amp-test`. The instance and the game server are separate: ⏻ turns the AMP instance on or off, ▶️/⏹ start and stop just the game (the instance stays on, so you can update it), and ▶️ on an instance that is off does both. Every action gets one message that follows it to the end – state, time, progress bar – and ends with ✅, ❌ with the last console lines, or ⚠️ when AMP waits for a click in its panel. A second click while it runs does nothing.
 - **Server icon** (Minecraft, `/servers` → a server → 🖼): send a 64×64 PNG as a file (with `python3-pil` installed any picture is cropped and scaled); friends can do it on their servers.
 - **Mods** (admin only: `/servers` → a server → 🧩): Minecraft (Forge, NeoForge, Fabric – the loader and game version are read from the server) from Modrinth, and BepInEx games such as Valheim from Thunderstore, by name or link, with their required dependencies; or send the file (.jar, or .zip/.dll for BepInEx, up to 20 MB). Removed mods go to a `.tg-trash` folder, not away for good; your BepInEx config files are never overwritten.
@@ -35,6 +35,18 @@
 - **Friends** (`/friends`): a friend sends `/start` to the bot, you get the request with a button and tick the servers they may manage. They see only those, with start, stop, restart, game update, backup, players (kick/ban) and the console - no passwords, no player alerts, no history. Every action they take is reported to you. 🗑 removes the access. With `TG_FRIENDS_TOKEN` friends use a separate bot (same process and database) and the main bot stays yours only. Friends can't use the console or upload mods. In their bot `/start` first asks for the language (4 buttons), and the menu holds just their things: `/servers`, `/online`, `/history`, `/week` – only for their servers.
 - **AMP panel on Telegram**: updates, backups and downloads started from the bot or the panel show up as one message with a live progress bar (▓▓▓▓░░░░░░ 40%), edited in place until ✅ done or ❌ failed; servers that start, stop or crash are reported too (`AMP_NOTIFY=0` turns it off).
 - **Updates** (`/updates`): every few hours the bot checks system packages (apt) and tells you when there are security updates or important ones (Tailscale, playit, Webmin, AMP's own package, kernel), when the machine needs a restart, and when a new AMP version is out - only when something new appears. The bot refreshes the package lists itself first (into its own folder, no root needed), so it shows what Webmin shows; packages Ubuntu holds back (phased updates, kept back) are listed separately, because `apt upgrade` won't install them yet.
+- **Players get warned** before a stop, restart, update or shutdown: when someone is online, the confirmation offers "⏳ In 60 s, with an in-game warning" (a `say` message, repeated at 30 s and 10 s, with ✖️ Cancel in the countdown message) or "⚡ Right now". The Valheim server has no console, so there it says players won't be warned.
+- **❗ Crash alerts**: a game server that goes down without anyone stopping it from the bot (AMP state "failed" or crash traces in the console) sends the last console lines and a ▶️ button. `CRASH_RESTART=1` starts it once by itself; a second crash within 30 minutes only alerts.
+- **🧩 Mod updates** (🔄 in the mods view): Minecraft mods are looked up on Modrinth by each file's SHA-1 (so hand-installed ones count), BepInEx packages by their version on Thunderstore. Update one or all; old versions go to `.tg-trash`, missing dependencies are added. Every 12 h the bot writes when there is something new.
+- **⬆️ New game versions**: Steam games (e.g. Valheim) by the build ID on Steam, vanilla Minecraft by Mojang's version list (modded Minecraft is skipped – the mods pin the version), with an update button. `GAME_AUTO_UPDATE=1` updates by itself once nobody is playing.
+- **🗂 Backups** (admin): the list of an instance's backups and restore in four steps – stop the game, back up the current state, restore, start again if it was running – in one progress message.
+- **➕ New instance** (admin, `/servers` → ➕): type a game, pick it from AMP's list, name it. AMP creates the instance and downloads the game without starting it; the finished message lists the ports for the playit tunnel. The bot's AMP role needs *Create Instance*.
+- **🔔 Friends' subscriptions**: in the friends' bot, "when the server is up" and "when someone joins" for each of their servers (names only).
+- **📊 RAM and CPU** of every server in its view (from AMP), and a 🧠 alert when a game server stays at `MEM_WARN` (95%) of its memory.
+- **Healthcheck** (`HC_URL`, e.g. healthchecks.io): the bot pings every `HC_MINUTES` while it runs, and pings `/fail` with the reason when the AMP panel doesn't answer – no cron script needed.
+- **🌐 Check from outside** (admin, server → 🌐 Tunnel): give the public address (from playit.gg) and the bot checks it every 2 minutes while the game runs – Minecraft with the Server List Ping (players, version), UDP games such as Valheim with a Steam query on the query port (`host:port udp`), others with a TCP connect. Three misses in a row = an alert.
+- **📋 Minecraft whitelist** (👥 Players → 📋): the list with 🗑, ➕ add a player, turn it on or off – through game commands; friends can do it on their servers.
+- **💬 Minecraft chat bridge** (`/bridge INSTANCE` in a Telegram group, `/bridge off` to unlink): the game chat shows up in the group and the group's messages go to the game as `tellraw` text (never as commands). Turn off the bot's Group Privacy in @BotFather (Bot Settings) so it sees the group's messages.
 - **Languages**: `/lang` with buttons, remembered per chat.
 - **Self-update**: `/update` installs the newest GitHub release after testing it on your server; `/rollback` goes back.
 
@@ -91,6 +103,16 @@ All in `/etc/amp-tg-bot.env` ([example](deploy/amp-tg-bot.env.example)); restart
 | `TEMP_ALERT` | `85` | CPU temperature alert, °C |
 | `PLAYIT_SERVICE` | `playit` | systemd service of the playit.gg agent |
 | `WEEKLY_DAY`, `WEEKLY_HOUR` | `6`, `20` | weekly summary: day (0 = Monday) and hour |
+| `WARN_SECONDS` | `60` | in-game warning before stop/restart/update when players are on; `0` = act right away |
+| `CRASH_RESTART` | `0` | `1` = start a crashed game server once by itself |
+| `AC_ALERT` | `1` | alert when the laptop switches to battery; `0` turns it off |
+| `DISK_WARN_GB` | `10` | alert when less disk space is free; `0` turns it off |
+| `MOD_CHECK_HOURS` | `12` | how often to look for new mod versions; `0` = never |
+| `GAME_CHECK_HOURS` | `3` | how often to look for new game versions; `0` = never |
+| `GAME_AUTO_UPDATE` | `0` | `1` = update a game by itself once nobody is playing |
+| `MEM_WARN` | `95` | alert when a game server uses this % of its memory; `0` turns it off |
+| `HC_URL` | – | ping URL for a healthcheck (e.g. healthchecks.io); the bot adds `/fail` when AMP doesn't answer |
+| `HC_MINUTES` | `5` | how often to ping `HC_URL` |
 | `AMP_INSTANCES` | `/home/amp/.ampdata/instances` | where AMP keeps its instances |
 | `DB_PATH` | `/var/lib/amp-tg-bot/players.db` | player history |
 

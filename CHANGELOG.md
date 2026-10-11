@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.4.0 (2026-10)
+
+- **Players get a warning before a stop, restart, update or shutdown.** When someone is online, the confirmation offers "⏳ In 60 s, with an in-game warning" (`say` in the game, again at 30 s and 10 s; the countdown message has ✖️ Cancel) or "⚡ Right now". Games without a console broadcast (the Valheim server) say so. `WARN_SECONDS` sets the time, `0` turns it off.
+- **❗ Crash alerts.** When a game server goes down without anyone stopping it from the bot (AMP state "failed", or crash traces in the console), you get the last console lines and a ▶️ button. With `CRASH_RESTART=1` the bot starts it once by itself; a second crash within 30 minutes only alerts.
+- **🧩 Mod updates.** 🔄 in the mods view checks for new versions: Minecraft by the SHA-1 of each .jar on Modrinth (so hand-installed mods count too), BepInEx games by the package version on Thunderstore. Update one or all; old versions go to `.tg-trash`, missing required dependencies are added. Every 12 h (`MOD_CHECK_HOURS`) the bot writes once per new set of updates.
+- **⬆️ New game versions.** Steam games (e.g. Valheim) by the build ID on Steam (api.steamcmd.net), vanilla Minecraft by Mojang's version list; modded Minecraft is skipped (the mods pin the version). Every 3 h (`GAME_CHECK_HOURS`), with an update button. `GAME_AUTO_UPDATE=1` updates by itself once nobody is playing.
+- **🗂 Backups: list and restore** (admin). Restoring stops the game, backs up the current state first, restores the chosen backup and starts the game again if it was running - one progress message through all four steps.
+- **➕ New instance from Telegram** (admin): type a game, pick it from AMP's list, name it - AMP creates the instance and downloads the game (without starting it). The finished message lists the ports for the playit tunnel. The bot's AMP role needs *Create Instance*.
+- **🔌 Charger unplugged** alert right away (after ~1 minute), not only when the battery drops below `BATTERY_WARN` (`AC_ALERT=0` turns it off).
+- **💽 Low disk space** alert below `DISK_WARN_GB` (10 GB) on `/` and on the disk with the AMP instances.
+- **🔔 Friends' subscriptions:** in their bot, a friend can turn on "when the server is up" and "when someone joins" for each of their servers (names only, no IDs).
+- **📊 RAM and CPU of every server** in its view (from AMP), and a 🧠 alert when a game server stays at `MEM_WARN` (95%) of its memory for about a minute.
+- **Healthcheck from the bot** (`HC_URL`, e.g. a healthchecks.io ping URL): a ping every `HC_MINUTES` (5) while the bot runs, and `/fail` with the reason when the AMP panel doesn't answer - a cron script is no longer needed.
+- **🌐 Check from outside:** give a server its public (playit) address and the bot checks it every 2 minutes while the game runs - Minecraft with the Server List Ping (players and version), UDP games (Valheim) with a Steam query, others with a TCP connect. Three misses in a row = an alert, then "answers again". The last result shows in the server view, with 🔎 Check now.
+- **📋 Minecraft whitelist** (👥 Players → 📋): the list from `whitelist.json` with 🗑, ➕ add a player, turn it on/off - through game commands, nicks checked (3-16 letters, digits, _). Friends can do it on their servers.
+- **💬 Minecraft chat bridge:** `/bridge INSTANCE` in a Telegram group links the game chat with the group, both ways (messages go to the game as `tellraw` text, never as commands). `/bridge off` unlinks. The bot needs Group Privacy turned off in @BotFather.
+
 ## 2.3.0 (2026-10)
 
 - **Friends' bot, trimmed:** its menu is `/servers`, `/online`, `/history`, `/week` - the last three only for the friend's own servers. No Dota, laptop status, updates, unban command, language command or rollback there. `/start` answers with the language buttons straight away, and after the choice a short "your commands are under ☰ Menu" instead of a list.

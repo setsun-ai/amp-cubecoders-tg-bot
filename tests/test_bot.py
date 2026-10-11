@@ -1205,3 +1205,586 @@ def test_server_icon(env, mod_instances, monkeypatch):
         raise AssertionError("JPEG without Pillow must be refused")
     except bot.ModError as e:
         assert "64×64" in str(e)
+
+
+# ---------- 2.4.0: ostrzezenia graczy, padniecia, kopie, nowe instancje, aktualizacje, subskrypcje, most ----------
+
+class GameAmp(bot.Amp):
+    """AMP bez sieci z ustawianymi instancjami, konsola, kopiami i lista gier; zapisuje wywolania."""
+
+    def __init__(self):
+        super().__init__("http://amp.test", "bot", "secret")
+        self.calls = []
+        self.insts = {"Valheim01": {"id": "abc", "friendly": "Valheim", "module": "Valheim", "running": True,
+                                    "state": 20},
+                      "Mc01": {"id": "def", "friendly": "Minecraft", "module": "Minecraft", "running": True,
+                               "state": 20}}
+        self.console_lines = ["old line"]
+        self.backup_list, self.apps_list = [], []
+
+    def _post(self, path, payload, timeout=30):
+        self.calls.append((path, payload))
+        if path.endswith("Core/Login"):
+            return {"success": True, "sessionID": "s"}
+        if path == "ADSModule/GetInstances":
+            return {"result": [{"InstanceId": "ads-guid", "CanCreate": True, "AvailableInstances": [
+                {"InstanceName": n, "InstanceID": i["id"], "FriendlyName": i["friendly"], "Module": "GenericModule",
+                 "ModuleDisplayName": i["module"], "Running": i["running"], "AppState": i["state"],
+                 "Metrics": i.get("metrics", {})}
+                for n, i in self.insts.items()]}]}
+        if path.endswith("Core/GetUpdates"):
+            return {"ConsoleEntries": [{"Contents": x} for x in self.console_lines]}
+        if path.endswith("Core/GetTasks"):
+            return {"result": []}
+        if path.endswith("LocalFileBackupPlugin/GetBackups"):
+            return {"result": self.backup_list}
+        if path == "ADSModule/GetSupportedApplications":
+            return {"result": self.apps_list}
+        if path == "ADSModule/GetApplicationEndpoints":
+            return {"result": [{"DisplayName": "Game", "Endpoint": "0.0.0.0:2456"}]}
+        return {"Status": True}
+
+    def sent(self, method):
+        return [(p, pl) for p, pl in self.calls if p.endswith(method)]
+
+    def console(self, *a, **k):  # konsola bez czekania 2 s
+        return super().console(*a, **{**k, "wait": 0})
+
+
+@pytest.fixture
+def ui(env, monkeypatch):
+    """Commands + AmpWatcher na GameAmp, zegar, przechwycone edycje i wiadomosci (z czatem i przyciskami)."""
+    clock = [1000.0]
+    monkeypatch.setattr(bot.time, "time", lambda: clock[0])
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    edits, sent_to = [], []
+    ids = iter(range(500, 900))
+    monkeypatch.setattr(bot, "edit", lambda chat, mid, text, markup=None: edits.append((chat, mid, text, markup)))
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append(
+        (chat_id, text, markup)) or next(ids))
+    monkeypatch.setattr(bot, "tg_api", lambda *a, **k: {})
+    monkeypatch.setattr(bot, "CHAT_ID", "1")
+    monkeypatch.setattr(bot, "FRIENDLY", {})
+    c = bot.Commands(env.db, env.inst)
+    c.amp = GameAmp()
+    c.watcher = bot.AmpWatcher(c.amp, env.db)
+
+    class UI:
+        pass
+
+    u = UI()
+    u.c, u.amp, u.w, u.clock, u.edits, u.sent = c, c.amp, c.watcher, clock, edits, sent_to
+
+    def click(data, user=None):
+        user = user or {"id": 1, "first_name": "Admin"}
+        c.handle_callback({"id": "q", "from": user, "data": data, "message": {"chat": {"id": user["id"]},
+                                                                              "message_id": 7}})
+        return edits[-1][2], edits[-1][3]
+
+    def say():
+        return [pl["message"] for _, pl in u.amp.sent("SendConsoleMessage")]
+
+    u.click, u.say = click, say
+    return u
+
+
+def test_players_get_warning_and_countdown_before_restart(env, ui):
+    env.write("Mc01", "[12:00:00] [Server thread/INFO]: Steve joined the game")
+    env.write("Valheim01", f"Got connection SteamID {SID_A}", "Got character ZDOID from Alice : 111:1")
+    text, markup = ui.click("do:restart:Mc01")
+    assert "dw:restart:Mc01" in str(markup) and "do!:restart:Mc01" in str(markup)  # z ostrzezeniem albo od razu
+    text, markup = ui.click("do:restart:Valheim01")
+    assert "nie przyjmuje" in text and "dw:" not in str(markup)  # serwer Valheima nie ma konsoli
+
+    text, _ = ui.click("dw:restart:Mc01")
+    assert ui.say() == ["say [Serwer] Restart serwera za 60 s – zaraz wracamy."]
+    assert not ui.amp.sent("Core/Restart") and "60 s" in text
+    progress = ui.sent[-1]
+    assert "dc:Mc01" in str(progress[2])  # wiadomosc z odliczaniem ma "Anuluj"
+    text, _ = ui.click("dw:restart:Mc01")
+    assert "Już trwa" in text and len(ui.say()) == 1  # drugie klikniecie nic nie robi
+
+    ui.clock[0] += 35
+    ui.w.check_ops()
+    assert ui.say()[-1].endswith("za 25 s – zaraz wracamy.")
+    ui.clock[0] += 20
+    ui.w.check_ops()
+    assert ui.say()[-1].endswith("za 5 s – zaraz wracamy.") and len(ui.say()) == 3
+    ui.clock[0] += 6
+    ui.w.check_ops()
+    assert len(ui.amp.sent("Core/Restart")) == 1 and "Mc01" in ui.w.ops  # po odliczaniu - restart i dalej postep
+
+    ui.w.ops.clear()
+    ui.click("dw:stop:Mc01")
+    text, _ = ui.click("dc:Mc01")
+    assert "Odwołane" in text and ui.say()[-1] == "say [Serwer] Odwołane – gramy dalej."
+    ui.clock[0] += 120
+    ui.w.check_ops()
+    assert not ui.amp.sent("Core/Stop") and not ui.w.ops
+    text, _ = ui.click("dc:Mc01")
+    assert "Za późno" in text
+
+
+def test_crash_alert_and_single_auto_restart(env, ui, monkeypatch):
+    w, amp = ui.w, ui.amp
+    w.check_states()
+    amp.insts["Valheim01"]["state"] = 0
+    amp.console_lines = ["Shutting down", "World saved"]
+    w.check_states()
+    assert ui.sent[-1][1] == "🔴 <b>Valheim</b>: zatrzymany"  # zwykly stop z panelu - nie padniecie
+
+    amp.insts["Valheim01"]["state"] = 20
+    w.check_states()
+    monkeypatch.setattr(bot, "CRASH_RESTART", True)
+    amp.insts["Valheim01"]["state"] = 0
+    amp.console_lines = ["NullReferenceException: Object reference not set", "Exited with code 139"]
+    w.check_states()
+    alert = ui.sent[-2]
+    assert "❗" in alert[1] and "NullReferenceException" in alert[1] and "do:start:Valheim01" in str(alert[2])
+    assert "jeden raz" in alert[1] and ui.amp.sent("Core/Start") and "Valheim01" in w.ops  # sam startuje i sledzi
+
+    w.ops.clear()
+    amp.insts["Valheim01"]["state"] = 20
+    w.check_states()
+    ui.clock[0] += 600
+    amp.insts["Valheim01"]["state"] = 100
+    w.check_states()
+    assert "drugi raz" in ui.sent[-1][1] and len(ui.amp.sent("Core/Start")) == 1  # drugi raz w 30 min - bez startu
+
+    amp.insts["Valheim01"]["state"] = 20
+    w.check_states()
+    w.done_at["Valheim01"] = ui.clock[0]  # stop z bota (np. restart): to nie padniecie
+    amp.insts["Valheim01"]["state"] = 0
+    w.check_states()
+    assert ui.sent[-1][1] == "🔴 <b>Valheim</b>: zatrzymany"
+
+
+def test_charger_and_disk_alerts(env, monkeypatch):
+    from collections import namedtuple
+    monkeypatch.setattr(bot, "playit_mode", lambda: None)
+    monkeypatch.setattr(bot, "cpu_temp", lambda: 50)
+    monkeypatch.setattr(bot, "INSTANCES_DIR", "/")
+    usage = namedtuple("usage", "total used free")
+    disk = [usage(100e9, 95e9, 5e9)]
+    monkeypatch.setattr(bot.shutil, "disk_usage", lambda path: disk[0])
+    h = bot.HostMonitor()
+    for ac, bat in [(True, 50), (False, 50), (False, 49), (False, 48), (True, 48)]:
+        monkeypatch.setattr(bot, "power_state", lambda ac=ac, bat=bat: (ac, bat))
+        h.check()
+    power = [m for m in env.sent if m.startswith("🔌")]
+    assert power == ["🔌 <b>Zasilacz odłączony</b> – laptop działa na baterii (49%).",
+                     "🔌 Zasilacz znowu podłączony."]  # dopiero drugie sprawdzenie z rzedu, raz
+    assert sum("Mało miejsca" in m for m in env.sent) == 1 and "wolne 5.0 GB (95% zajęte)" in env.sent[0]
+    disk[0] = usage(100e9, 50e9, 50e9)
+    h.check()
+    assert env.sent[-1] == "💽 Dysk /: znowu wolne 50 GB."
+
+
+def test_friend_subscriptions(env, ui):
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    text, markup = ui.click("srv:Valheim01", friend)
+    assert "🔕 Gdy serwer wstanie" in str(markup) and "sub:join:Valheim01" in str(markup)
+    text, markup = ui.click("sub:join:Valheim01", friend)
+    assert "🔔 Dam znać" in text and "🔔 Gdy ktoś wejdzie" in str(markup)
+    ui.click("sub:up:Valheim01", friend)
+    n = len(ui.edits)
+    ui.click("sub:up:Mc01", friend)  # cudzy serwer
+    assert len(ui.edits) == n and bot.subs_of(env.db, 42, "Mc01") == set()
+    ui.c.scope, ui.c.uid = None, 1
+    assert "sub:" not in str(ui.c.server_view("Valheim01", "pl")[1])  # admin ma wszystko i tak
+
+    env.write("Valheim01", f"Got connection SteamID {SID_A}", "Got character ZDOID from Alice : 111:1")
+    to_friend = [text for chat, text, _ in ui.sent if chat == 42]
+    assert to_friend and "Alice" in to_friend[-1] and SID_A not in to_friend[-1]  # bez SteamID dla znajomego
+
+    ui.w.check_states()
+    ui.amp.insts["Valheim01"]["state"] = 0
+    ui.w.check_states()
+    ui.amp.insts["Valheim01"]["state"] = 20
+    ui.w.check_states()
+    assert [text for chat, text, _ in ui.sent if chat == 42][-1] == "🟢 <b>Valheim</b> działa – można wchodzić!"
+
+    bot.friend_remove(env.db, 42)
+    ui.sent.clear()
+    env.write("Valheim01", f"Got connection SteamID {SID_B}", "Got character ZDOID from Bob : 222:1")
+    assert not [1 for chat, _, _ in ui.sent if chat == 42]
+
+
+def test_amp_time_formats():
+    assert bot.amp_time("/Date(1700000000000)/") == 1_700_000_000
+    assert bot.amp_time("2023-11-14T22:13:20.1234567Z") == 1_700_000_000  # 7 cyfr ulamka z .NET
+    assert bot.amp_time("2023-11-14T23:13:20+01:00") == 1_700_000_000
+    assert bot.amp_time("nonsense") is None and bot.amp_time(None) is None
+
+
+def test_backup_list_and_restore_in_steps(env, ui):
+    ui.amp.backup_list = [
+        {"Id": "old-1", "Name": "Weekly", "Timestamp": "/Date(1600000000000)/", "Sticky": True},
+        {"Id": "new-2", "Name": "Telegram 2023-11-14", "Timestamp": "2023-11-14T22:13:20Z"}]
+    text, markup = ui.click("bk:Valheim01")
+    labels = [b["text"] for row in markup["inline_keyboard"] for b in row]
+    assert labels[0].endswith("Telegram 2023-11-14") and labels[1].startswith("📌")  # najnowsza u gory
+    text, markup = ui.click("bkr:0:Valheim01")
+    assert "❓" in text and "bk!:0:Valheim01" in str(markup) and not ui.amp.sent("RestoreBackup")
+
+    ui.click("bk!:0:Valheim01")
+    assert ui.amp.sent("/API/Core/Stop")  # 1/4: gra dzialala - najpierw stop
+    ui.amp.insts["Valheim01"]["state"] = 0
+    ui.clock[0] += 5
+    ui.w.check_ops()
+    safety = ui.amp.sent("TakeBackup")[-1][1]
+    assert safety["Title"].startswith("Przed przywróceniem")  # 2/4: kopia obecnego stanu
+    ui.clock[0] += 31
+    ui.w.check_ops()
+    restore = ui.amp.sent("RestoreBackup")[-1][1]
+    assert restore["BackupId"] == "new-2" and restore["DeleteExistingData"] is False  # 3/4
+    ui.clock[0] += 31
+    ui.w.check_ops()
+    assert ui.amp.sent("/API/Core/Start")  # 4/4: dzialala przed przywroceniem - start
+    ui.amp.insts["Valheim01"]["state"] = 20
+    ui.clock[0] += 5
+    ui.w.check_ops()
+    assert "✅" in ui.edits[-1][2] and "Przywracanie kopii" in ui.edits[-1][2] and not ui.w.ops
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    assert "bk:" not in str(ui.click("srv:Valheim01", friend)[1])  # znajomy nie przywraca kopii
+    n = len(ui.edits)
+    ui.click("bk!:0:Valheim01", friend)
+    assert len(ui.edits) == n
+
+
+def test_new_instance_from_telegram(env, ui):
+    ui.amp.apps_list = [
+        {"Id": "spec-valheim", "FriendlyName": "Valheim", "ModuleName": "GenericModule", "SupportedPlatforms": 3},
+        {"Id": "spec-old", "FriendlyName": "Valheim Legacy", "DeprecatedReason": "old"},
+        {"Id": "spec-win", "FriendlyName": "Valheim Windows Tools", "SupportedPlatforms": 1}]
+    text, markup = ui.c.servers_view("pl")
+    assert '"new"' in json.dumps(markup)
+    ui.click("new")
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "valh", "message_id": 2})
+    picks = [b["text"] for row in ui.sent[-1][2]["inline_keyboard"] for b in row]
+    assert "Valheim" in picks and not any("Legacy" in p or "Windows" in p for p in picks)
+    ui.click("nw:0")
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "Ekipa\nZimowa", "message_id": 3})
+    assert "nw!:go" in str(ui.sent[-1][2]) and not ui.amp.sent("CreateInstanceFromSpec")
+    ui.click("nw!:go")
+    _, params = ui.amp.sent("CreateInstanceFromSpec")[-1]
+    assert (params["SpecId"], params["TargetADSInstance"], params["FriendlyName"], params["PostCreate"]) == (
+        "spec-valheim", "ads-guid", "Ekipa Zimowa", 1)
+
+    ui.amp.insts["EkipaZimowa01"] = {"id": "ghi", "friendly": "Ekipa Zimowa", "module": "Valheim", "running": False,
+                                     "state": 0}
+    ui.clock[0] += 5
+    ui.w.check_ops()
+    assert "0.0.0.0:2456" in ui.edits[-1][2] and "playit" in ui.edits[-1][2] and not ui.w.ops
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    assert "new" not in json.dumps(ui.c.servers_view("pl")[1]) or ui.c.scope is None
+    ui.c.scope = {"Valheim01"}
+    assert '"new"' not in json.dumps(ui.c.servers_view("pl")[1])
+    n = len(ui.edits)
+    ui.click("new", friend)
+    assert len(ui.edits) == n
+
+
+def test_mod_updates_modrinth(env, ui, mod_instances, monkeypatch):
+    import hashlib
+    root, _ = mod_instances
+    old_sha = hashlib.sha1(b"jar").hexdigest()
+    asked = []
+
+    def fake_json(url, timeout=30, data=None):
+        asked.append((url, data))
+        if url.endswith("/version_files/update"):
+            return {old_sha: {"project_id": "jei", "version_number": "15.62", "dependencies": [
+                {"project_id": "lib", "dependency_type": "required"},
+                {"project_id": "x", "dependency_type": "optional"}],
+                "files": [{"filename": "jei-new.jar", "url": "u-new", "primary": True, "hashes": {"sha1": "ffff"}}]}}
+        if "/project/lib/version" in url:
+            return [{"name": "Lib 2", "files": [{"filename": "lib.jar", "url": "u-lib", "primary": True}],
+                     "dependencies": []}]
+        raise AssertionError(url)
+
+    monkeypatch.setattr(bot, "http_json", fake_json)
+    monkeypatch.setattr(bot, "http_download", lambda url, dest: open(dest, "wb").write(url.encode()))
+    target = bot.mod_target("Mc01")
+    updates, projects, found = bot.mod_updates(target)
+    assert [(u["entry"], u["new"]) for u in updates] == [("jei-1.20.1.jar", "15.62")] and found == 1
+    assert asked[0][1]["loaders"] == ["forge"] and asked[0][1]["game_versions"] == ["1.20.1"]
+
+    text, markup = ui.click("mdu:Mc01")
+    assert "15.62" in text and "mdx:0:Mc01" in str(markup) and "mdU:Mc01" in str(markup)
+    text, _ = ui.click("mdU:Mc01")
+    mods = root / "Mc01" / "Minecraft" / "mods"
+    assert (mods / "jei-new.jar").read_bytes() == b"u-new" and (mods / "lib.jar").read_bytes() == b"u-lib"
+    assert not (mods / "jei-1.20.1.jar").exists() and len(list((root / "Mc01" / "Minecraft" / ".tg-trash").iterdir()))
+    assert "Zaktualizowano" in text and "🔁" in text
+
+
+def test_mod_updates_thunderstore(env, mod_instances, monkeypatch, tmp_path):
+    import zipfile
+    _, plugins = mod_instances
+    (plugins / "RandyKnapp-EpicLoot").mkdir()
+    (plugins / "RandyKnapp-EpicLoot" / "manifest.json").write_text('{"name": "EpicLoot", "version_number": "0.14.0"}')
+    (plugins / "RandyKnapp-EpicLoot" / "Old.dll").write_text("old")
+    (plugins / "Handmade").mkdir()  # bez manifestu - pomijamy
+    api = {"/package/RandyKnapp/EpicLoot/": {"latest": {"download_url": "z-epic", "version_number": "0.15.1",
+                                                         "dependencies": ["ValheimModding-Jotunn-2.30"]}},
+           "/package/ValheimModding/Jotunn/": {"latest": {"download_url": "z-jotunn", "version_number": "2.30",
+                                                          "dependencies": []}}}
+    monkeypatch.setattr(bot, "http_json", lambda url, timeout=30, data=None: api[next(k for k in api if k in url)])
+
+    def fake_download(url, dest):
+        with zipfile.ZipFile(dest, "w") as z:
+            z.writestr("plugins/New.dll", url)
+
+    monkeypatch.setattr(bot, "http_download", fake_download)
+    target = bot.mod_target("Valheim01")
+    updates, projects, found = bot.mod_updates(target)
+    assert [(u["entry"], u["new"]) for u in updates] == [("RandyKnapp-EpicLoot", "0.15.1")] and found == 1
+    done = bot.apply_mod_update(target, updates[0], projects)
+    assert (plugins / "RandyKnapp-EpicLoot" / "New.dll").read_text() == "z-epic"
+    assert not (plugins / "RandyKnapp-EpicLoot" / "Old.dll").exists()  # stara wersja w koszu, nie pomieszana
+    assert (plugins / "ValheimModding-Jotunn" / "New.dll").exists() and len(done) == 2  # brakujaca zaleznosc
+
+
+def test_mod_watcher_notifies_once(env, mod_instances, monkeypatch):
+    sent_to = []
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((text, markup)))
+    found = [{"entry": "jei.jar", "title": "jei", "new": "2"}]
+    monkeypatch.setattr(bot, "mod_updates", lambda target: (
+        (found, set(), 1) if target["game"] == "minecraft" else ([], set(), 0)))
+    w = bot.ModWatcher(env.db)
+    w.last = 0
+    w.poll()
+    assert len(sent_to) == 1 and "jei" in sent_to[0][0] and "mdu:Mc01" in str(sent_to[0][1])
+    w.last = 0
+    w.poll()
+    assert len(sent_to) == 1  # ten sam zestaw - bez powtorki
+
+
+def test_game_updates_steam_and_minecraft(env, ui, mod_instances, monkeypatch):
+    import zipfile
+    root, _ = mod_instances
+    apps = root / "Valheim01" / "Valheim" / "896660" / "steamapps"
+    apps.mkdir(parents=True)
+    (apps / "appmanifest_896660.acf").write_text('"AppState"\n{\n\t"appid"\t\t"896660"\n\t"buildid"\t\t"100"\n}\n')
+    (apps / "appmanifest_1007.acf").write_text('"AppState"\n{\n\t"appid"\t\t"1007"\n\t"buildid"\t\t"1"\n}\n')
+    vanilla = root / "Vanilla01" / "Minecraft"
+    vanilla.mkdir(parents=True)
+    with zipfile.ZipFile(vanilla / "minecraft_server.jar", "w") as z:
+        z.writestr(zipfile.ZipInfo("version.json", (2024, 1, 1, 0, 0, 0)), '{"id": "1.21.1"}')
+    api = {"/896660": {"data": {"896660": {"depots": {"branches": {"public": {"buildid": "200"}}}}}},
+           "version_manifest": {"latest": {"release": "1.21.4", "snapshot": "x"}}}
+    monkeypatch.setattr(bot, "http_json", lambda url, timeout=30, data=None: api[next(k for k in api if k in url)])
+    assert bot.steam_manifests("Valheim01") == [("896660", "100", "public")]  # bez redystrybucji Steama
+    assert bot.game_update("Valheim01") == ("build 100", "build 200")
+    assert bot.game_update("Vanilla01") == ("1.21.1", "1.21.4")
+    assert bot.game_update("Mc01") is None  # Forge: wersje trzymaja mody
+
+    g = bot.GameWatcher(env.db, ui.amp, ui.w, env.inst)
+    g.check()
+    notes = [(text, markup) for _, text, markup in ui.sent if "nowa wersja gry" in text]
+    assert len(notes) == 2 and "do:update:Valheim01" in str(notes[0][1]) and "przypiętą" in notes[1][0]
+    g.check()
+    assert len([1 for _, text, _ in ui.sent if "nowa wersja gry" in text]) == 2  # bez powtorki
+
+    monkeypatch.setattr(bot, "GAME_AUTO_UPDATE", True)
+    (apps / "appmanifest_896660.acf").write_text('"AppState"\n{\n\t"appid"\t\t"896660"\n\t"buildid"\t\t"150"\n}\n')
+    env.write("Valheim01", f"Got connection SteamID {SID_A}", "Got character ZDOID from Alice : 111:1")
+    g.check()
+    g.auto_update()
+    assert not ui.amp.sent("UpdateApplication")  # ktos gra - czekamy
+    env.write("Valheim01", f"Closing socket {SID_A}")
+    g.auto_update()
+    assert len(ui.amp.sent("UpdateApplication")) == 1 and ui.w.busy("Valheim01") == "update" \
+        and "Valheim01" not in g.pending
+
+
+def test_minecraft_chat_bridge(env, ui):
+    ui.c.handle({"chat": {"id": -100}, "from": {"id": 1}, "text": "/bridge Valheim01"})
+    assert "❌" in ui.sent[-1][1] and not bot.BRIDGES  # tylko Minecraft
+    ui.c.handle({"chat": {"id": -100}, "from": {"id": 7, "first_name": "Obcy"}, "text": "/bridge Mc01"})
+    assert not bot.BRIDGES  # nie-admin nie wlacza mostu
+    ui.c.handle({"chat": {"id": -100}, "from": {"id": 1}, "text": "/bridge Mc01"})
+    assert bot.BRIDGES == {"Mc01": "-100"} and bot.meta_get(env.db, "bridge:-100") == "Mc01"
+
+    env.write("Mc01", "[12:00:00] [Server thread/INFO]: <Steve> czesc <b>",
+              "[12:00:01] [Server thread/INFO]: [Not Secure] <Alex> hi")
+    chat = [(c, text) for c, text, _ in ui.sent if c == "-100"]
+    assert chat == [("-100", "💬 <b>Steve</b>: czesc &lt;b&gt;"), ("-100", "💬 <b>Alex</b>: hi")]
+
+    ui.c.handle_updates([{"update_id": 5, "message": {
+        "chat": {"id": -100}, "from": {"id": 7, "first_name": "Ola"}, "date": ui.clock[0],
+        "text": 'hej "x"\n/op Ola'}}], "")
+    line = ui.say()[-1]
+    assert line.startswith("tellraw @a ") and "\n" not in line
+    parts = json.loads(line[len("tellraw @a "):])
+    assert parts[1]["text"] == "[TG] " and parts[2]["text"] == "Ola: " and parts[3]["text"] == 'hej "x" /op Ola'
+
+    bot.load_bridges(env.db)  # po restarcie bota most wraca z bazy
+    assert bot.BRIDGES == {"Mc01": "-100"}
+    ui.c.handle({"chat": {"id": -100}, "from": {"id": 1}, "text": "/bridge off"})
+    assert not bot.BRIDGES
+
+
+def test_server_metrics_and_memory_alert(env, ui, monkeypatch):
+    def metrics(mem_pct):
+        return {"CPU Usage": {"RawValue": 12, "MaxValue": 100, "Percent": 12, "Units": "%"},
+                "Memory Usage": {"RawValue": 8192 * mem_pct // 100, "MaxValue": 8192, "Percent": mem_pct,
+                                 "Units": "MB"}}
+
+    ui.amp.insts["Mc01"]["metrics"] = metrics(25)
+    text, _ = ui.c.server_view("Mc01", "pl")
+    assert "📊 CPU 12% · RAM 2.0 / 8.0 GB (25%)" in text
+    ui.amp.insts["Mc01"]["running"] = False
+    assert "📊" not in ui.c.server_view("Mc01", "pl")[0]  # wylaczona instancja - bez metryk
+    ui.amp.insts["Mc01"]["running"] = True
+
+    ui.amp.insts["Mc01"]["metrics"] = metrics(97)
+    for _ in range(3):
+        ui.w.check_states()
+    alerts = [text for _, text, _ in ui.sent if text.startswith("🧠")]
+    assert len(alerts) == 1 and "97%" in alerts[0] and "7.8 / 8.0 GB" in alerts[0]  # po 2 sprawdzeniach, raz
+    ui.amp.insts["Mc01"]["metrics"] = metrics(80)
+    ui.w.check_states()
+    assert ui.sent[-1][1] == "🧠 <b>Minecraft</b>: pamięć znowu 80%."
+
+
+def test_healthcheck_ping_and_fail(env, monkeypatch):
+    pings = []
+
+    class Resp:
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bot, "HC_URL", "https://hc.test/ping/abc")
+    monkeypatch.setattr(bot.urllib.request, "urlopen", lambda req, timeout=10: pings.append(
+        (req.full_url, req.data.decode())) or Resp())
+    amp = GameAmp()
+    h = bot.Healthcheck(amp)
+    h.poll()
+    assert pings == [("https://hc.test/ping/abc", f"amp-tg-bot {bot.VERSION}, AMP ok (2)")]
+    h.poll()
+    assert len(pings) == 1  # nie czesciej niz co HC_MINUTES
+
+    def broken(*a, **k):
+        raise bot.AmpError("login: bad password")
+
+    amp._post = broken
+    h.last = 0
+    h.poll()
+    assert pings[-1][0] == "https://hc.test/ping/abc/fail" and "bad password" in pings[-1][1]
+
+
+def test_address_checks_minecraft_and_steam_query():
+    import socket
+    import threading
+
+    assert bot.parse_address("abc.joinmc.link:25565") == ("abc.joinmc.link", 25565, "")
+    assert bot.parse_address("1.2.3.4:2457 udp") == ("1.2.3.4", 2457, "udp")
+    assert bot.parse_address("abc") is None and bot.parse_address("x:70000") is None
+
+    mc = socket.socket()
+    mc.bind(("127.0.0.1", 0))
+    mc.listen(1)
+
+    def minecraft():
+        conn, _ = mc.accept()
+        with conn:
+            conn.recv(1024)  # handshake + prosba o status
+            status = json.dumps({"version": {"name": "1.20.1"}, "players": {"online": 2, "max": 20}}).encode()
+            payload = b"\x00" + bot._varint(len(status)) + status
+            conn.sendall(bot._varint(len(payload)) + payload)
+
+    udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp.bind(("127.0.0.1", 0))
+
+    def steam():
+        data, addr = udp.recvfrom(1400)
+        udp.sendto(b"\xff\xff\xff\xffA\x01\x02\x03\x04", addr)  # challenge
+        data, addr = udp.recvfrom(1400)
+        assert data.endswith(b"\x01\x02\x03\x04")
+        udp.sendto(b"\xff\xff\xff\xffI\x11Viking\x00Map\x00valheim\x00Valheim\x00\x00\x00" + bytes([3, 10]), addr)
+
+    threads = [threading.Thread(target=minecraft, daemon=True), threading.Thread(target=steam, daemon=True)]
+    for th in threads:
+        th.start()
+    assert bot.check_address(f"127.0.0.1:{mc.getsockname()[1]}", "Minecraft") == (True, " – 2/20, 1.20.1")
+    assert bot.check_address(f"127.0.0.1:{udp.getsockname()[1]} udp") == (True, " – 3/10")
+    closed = socket.socket()
+    closed.bind(("127.0.0.1", 0))
+    port = closed.getsockname()[1]
+    closed.close()
+    assert bot.check_address(f"127.0.0.1:{port}")[0] is False  # nikt nie slucha
+    mc.close()
+    udp.close()
+
+
+def test_tunnel_setting_and_watcher(env, ui, monkeypatch):
+    results = [(False, "timed out")] * 4 + [(True, " – 1/20")]  # 1. przy zapisie adresu, 3 z watchera
+    monkeypatch.setattr(bot, "check_address", lambda addr, game=None: results.pop(0))
+    monkeypatch.setattr(bot, "TUNNEL_STATE", {})
+    text, markup = ui.click("tn:Mc01")
+    assert "joinmc" in text and "tnc:" not in str(markup)  # jeszcze bez adresu
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "nie adres", "message_id": 2})
+    assert "❌" in ui.sent[-1][1] and bot.meta_get(env.db, "tunnel:Mc01") is None
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "abc.joinmc.link:25565", "message_id": 3})
+    assert bot.meta_get(env.db, "tunnel:Mc01") == "abc.joinmc.link:25565" and "nie odpowiada" in ui.sent[-1][1]
+
+    w = bot.TunnelWatcher(env.db, ui.amp, env.inst)
+    for _ in range(3):
+        w.last = 0
+        w.poll()
+    downs = [text for _, text, _ in ui.sent if "z zewnątrz nie odpowiada" in text]
+    assert len(downs) == 1 and "abc.joinmc.link:25565" in downs[0]  # przy 3. bledzie z rzedu, raz
+    w.last = 0
+    w.poll()
+    assert ui.sent[-1][1] == "🌐 <b>Minecraft</b> znowu odpowiada z zewnątrz."
+    assert "✅ odpowiada – 1/20" in ui.c.server_view("Mc01", "pl")[0]
+
+    ui.amp.insts["Mc01"]["state"] = 0
+    results.append((False, "x"))
+    w.last = 0
+    w.poll()
+    assert len(results) == 1  # serwer zatrzymany - nie sprawdzamy
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Mc01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    assert "tn:" not in str(ui.click("srv:Mc01", friend)[1])
+    n = len(ui.edits)
+    ui.click("tn:Mc01", friend)
+    assert len(ui.edits) == n
+
+
+def test_minecraft_whitelist(env, ui, mod_instances):
+    root, _ = mod_instances
+    mc = root / "Mc01" / "Minecraft"
+    (mc / "whitelist.json").write_text('[{"uuid": "00000000-0000-4000-8000-000000000001", "name": "Steve"}]')
+    (mc / "server.properties").write_text("motd=Hi\nwhite-list=true\n")
+    text, markup = ui.click("pl:Mc01")
+    assert "wl:Mc01" in str(markup)
+    assert "wl:" not in str(ui.click("pl:Valheim01")[1])  # tylko Minecraft
+    text, markup = ui.click("wl:Mc01")
+    assert "włączona" in text and "🗑 Steve" in str(markup) and "🔓" in str(markup)
+    ui.click("wlr:0:Mc01")
+    assert ui.say()[-1] == "whitelist remove Steve"
+    ui.click("wla:Mc01")
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "Alex; op Alex", "message_id": 4})
+    assert "❌" in ui.sent[-1][1] and ui.say()[-1] == "whitelist remove Steve"  # zly nick - nic do konsoli
+    ui.c.handle_text({"chat": {"id": 1}, "from": {"id": 1}, "text": "Alex_2", "message_id": 5})
+    assert ui.say()[-1] == "whitelist add Alex_2"
+    ui.click("wlt:Mc01")
+    assert ui.say()[-1] == "whitelist off"
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Mc01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    ui.click("wla:Mc01", friend)  # znajomy na swoim serwerze: tak
+    ui.c.handle_text({"chat": {"id": 42}, "from": friend, "text": "Builder_7", "message_id": 6})
+    assert ui.say()[-1] == "whitelist add Builder_7"
+    ui.amp.insts["Mc01"]["state"] = 0
+    text, _ = ui.click("wlt:Mc01")
+    assert "musi działać" in text and ui.say()[-1] == "whitelist add Builder_7"
