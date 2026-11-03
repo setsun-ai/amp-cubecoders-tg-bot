@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.6.0 (unreleased)
+## 2.6.0 (2026-11)
 
 - **A button that does nothing says why.** A friend who taps something that isn't theirs gets a pop-up "🔒 This server isn't yours – ask the admin for access", or "🔒 Only the admin can do this" (a stranger: "This is a private bot"), instead of nothing at all. Nothing changes and you get no message.
 - **Errors in plain words.** Instead of `HTTPError`, `TimeoutError` or `<urlopen error [Errno 61]>` every message says what happened: the server didn't answer in time, nothing answers at that address, no connection, access denied (401), the server's error (503), too many requests, a strange answer, no disk space. AMP's own reason stays as it is. One place does it for AMP, mods, Dota, updates and the world download.

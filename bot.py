@@ -40,7 +40,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.5.1"
+VERSION = "2.6.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
