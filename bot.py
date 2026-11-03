@@ -102,6 +102,7 @@ MEM_WARN = int(os.environ.get("MEM_WARN", "95"))  # alert, gdy serwer gry zajmie
 # healthchecks.io (albo inny URL do pingowania): bot sam melduje, ze zyje; /fail, gdy panel AMP nie odpowiada
 HC_URL = os.environ.get("HC_URL", "").rstrip("/")
 HC_MINUTES = float(os.environ.get("HC_MINUTES", "5"))
+WORLD_MAX_MB = float(os.environ.get("WORLD_MAX_MB", "2000"))  # 📦 swiat wiekszy niz tyle MB - bez pobierania; 0 = bez
 TUNNEL_CHECK_SECONDS = 120  # serwery z adresem z zewnatrz (🌐 Tunel): sprawdzanie co 2 min
 STEAMCMD_API = "https://api.steamcmd.net/v1/info"
 MOJANG_MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
@@ -774,6 +775,14 @@ STRINGS = {
                    "⚠️ The game kept saving the world while I packed it – try again in a minute.",
                    "⚠️ Игра всё время сохраняла мир, пока я его упаковывал – попробуй через минуту.",
                    "⚠️ Гра весь час зберігала світ, поки я його пакував – спробуй за хвилину."),
+    "world_too_big": ("⚠️ Świat {world} ma {size} MB – za duży na Telegram (limit {max} MB, WORLD_MAX_MB).",
+                      "⚠️ The world {world} has {size} MB – too big to send on Telegram (limit {max} MB, WORLD_MAX_MB).",
+                      "⚠️ Мир {world} весит {size} МБ – слишком большой для Telegram (лимит {max} МБ, WORLD_MAX_MB).",
+                      "⚠️ Світ {world} важить {size} МБ – завеликий для Telegram (ліміт {max} МБ, WORLD_MAX_MB)."),
+    "world_no_space": ("⚠️ Za mało miejsca na dysku na zip świata {world} ({size} MB) – zwolnij miejsce i spróbuj.",
+                       "⚠️ Not enough disk space for the zip of {world} ({size} MB) – free some space and try again.",
+                       "⚠️ Мало места на диске для zip мира {world} ({size} МБ) – освободи место и попробуй снова.",
+                       "⚠️ Замало місця на диску для zip світу {world} ({size} МБ) – звільни місце й спробуй знову."),
     "bk_title": ("🗂 <b>{name}</b> – kopie (najnowsze u góry). Dotknij, żeby przywrócić:",
                  "🗂 <b>{name}</b> – backups (newest first). Tap one to restore:",
                  "🗂 <b>{name}</b> – бэкапы (новые сверху). Нажми, чтобы восстановить:",
@@ -5181,6 +5190,13 @@ class Commands:
         if not src:
             return self.server_view(name, lang, note=t("world_none", lang))
         world, paths = src
+        raw = sum(size for _, size, _ in files_state(world_files(paths)))
+        mb = f"{raw / 1e6:.0f}"
+        if WORLD_MAX_MB and raw > WORLD_MAX_MB * 1e6:
+            return self.server_view(name, lang, note=t("world_too_big", lang, world=esc(world), size=mb,
+                                                       max=f"{WORLD_MAX_MB:g}"))
+        if shutil.disk_usage(tempfile.gettempdir()).free < raw + 100e6:  # zip nie jest wiekszy od plikow
+            return self.server_view(name, lang, note=t("world_no_space", lang, world=esc(world), size=mb))
         send(t("world_working", lang, world=esc(world)), chat)
         minecraft = False
         if os.path.isdir(os.path.join(INSTANCES_DIR, name, "Minecraft")):

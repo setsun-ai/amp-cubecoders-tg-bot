@@ -1932,3 +1932,18 @@ def test_world_download_minecraft_pauses_saving(env, ui, mod_instances, monkeypa
     ui.amp.insts["Mc01"]["state"] = 0
     ui.click("wd:Mc01")
     assert ui.say() == ["save-off", "save-all flush", "save-on"]  # serwer zatrzymany - pliki sa juz zapisane
+
+
+def test_world_download_refuses_too_big_or_no_disk(env, ui, mod_instances, monkeypatch):
+    root, _ = mod_instances
+    make_valheim_worlds(root)
+    docs = []
+    monkeypatch.setattr(bot, "send_document", lambda *a, **k: docs.append(a))
+    monkeypatch.setattr(bot, "WORLD_MAX_MB", 0.0001)  # swiat ma ok. 500 B
+    text, _ = ui.click("wd:Valheim01")
+    assert "za duży" in text and docs == []
+
+    monkeypatch.setattr(bot, "WORLD_MAX_MB", 0)  # 0 = bez limitu
+    monkeypatch.setattr(bot.shutil, "disk_usage", lambda p: bot.shutil._ntuple_diskusage(10**9, 10**9, 100))
+    text, _ = ui.click("wd:Valheim01")
+    assert "miejsca" in text and docs == []
