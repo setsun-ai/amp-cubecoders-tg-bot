@@ -42,7 +42,7 @@
 - **🗂 Backups** (admin): the list of an instance's backups and restore in four steps – stop the game, back up the current state, restore, start again if it was running – in one progress message.
 - **➕ New instance** (admin, `/servers` → ➕): type a game, pick it from AMP's list, name it. AMP creates the instance and downloads the game without starting it; the finished message lists the ports for the playit tunnel. The bot's AMP role needs *Create Instance*.
 - **🔔 Friends' subscriptions**: in the friends' bot, "when the server is up" and "when someone joins" for each of their servers (names only).
-- **📦 Download the world** (server → 📦; admin, and friends on their own servers): the current Valheim world (new folder format or the old `.fwl` + `.db`) or the Minecraft world as a zip in the chat, without stopping the server – if the game saves meanwhile, the bot packs again; Minecraft gets `save-off`/`save-all` first. Over 49 MB it comes in `.001`, `.002` parts for 7-Zip.
+- **📦 Download the world** (server → 📦; admin, and friends on their own servers): the current Valheim world (new folder format or the old `.fwl` + `.db`) or the Minecraft world as a zip in the chat, without stopping the server – if the game saves meanwhile, the bot packs again; Minecraft gets `save-off`/`save-all` first. Over 49 MB it comes in `.001`, `.002` parts for 7-Zip. It packs and uploads in the background, one world at a time, so alerts and commands keep working; worlds over `WORLD_MAX_MB` or without enough free disk space are refused.
 - **📊 RAM and CPU** of every server in its view (from AMP), and a 🧠 alert when a game server stays at `MEM_WARN` (95%) of its memory.
 - **Healthcheck** (`HC_URL`, e.g. healthchecks.io): the bot pings every `HC_MINUTES` while it runs, and pings `/fail` with the reason when the AMP panel doesn't answer – no cron script needed.
 - **🌐 Check from outside** (admin, server → 🌐 Tunnel): give the public address (from playit.gg) and the bot checks it every 2 minutes while the game runs – Minecraft with the Server List Ping (players, version), UDP games such as Valheim with a Steam query on the query port (`host:port udp`), others with a TCP connect. Three misses in a row = an alert.
@@ -114,6 +114,7 @@ All in `/etc/amp-tg-bot.env` ([example](deploy/amp-tg-bot.env.example)); restart
 | `MEM_WARN` | `95` | alert when a game server uses this % of its memory; `0` turns it off |
 | `HC_URL` | – | ping URL for a healthcheck (e.g. healthchecks.io); the bot adds `/fail` when AMP doesn't answer |
 | `HC_MINUTES` | `5` | how often to ping `HC_URL` |
+| `WORLD_MAX_MB` | `2000` | 📦 worlds bigger than this (MB, before zipping) are not sent; `0` = no limit |
 | `AMP_INSTANCES` | `/home/amp/.ampdata/instances` | where AMP keeps its instances |
 | `DB_PATH` | `/var/lib/amp-tg-bot/players.db` | player history |
 

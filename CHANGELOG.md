@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.1 (2026-11)
+
+- **📦 Download the world in the background**: packing and uploading no longer stop the bot - player and crash alerts, commands and the healthcheck keep working while a big world uploads. Minecraft gets `save-on` as soon as the zip is packed, not after the upload. The "Packing..." message turns into the result. One world at a time: a second click says it is already packing, and `/update` waits for the download before restarting.
+- **Size and disk limits**: worlds over `WORLD_MAX_MB` (default 2000 MB before zipping, `0` = no limit) or without enough free disk space for the zip are refused with a message, instead of filling the disk.
+- Less memory and disk: the file is uploaded in 1 MB chunks, and the `.001`, `.002`... parts are read straight from the one zip instead of being copied to disk. The note on how to join the parts is in the first part's caption.
+
 ## 2.5.0 (2026-11)
 
 - **📦 Download the world** (server view; admin, and friends on their own servers): the bot zips the current world and sends it to the chat. Valheim: the newest world in `worlds_local` - the new folder format (`*.chunk`, `_main.N.*`) or the old `.fwl` + `.db` pair - never the `_backup` copies or `.old` files. Minecraft: the `level-name` folder (with `_nether` and `_the_end` when separate), after `save-off` + `save-all flush`, and `save-on` afterwards. The server keeps running: if the game saves while the bot packs, it packs again. The caption says when the game last saved. A zip over 49 MB (the bot upload limit is 50 MB) comes in `.001`, `.002`... parts for 7-Zip. Every download by a friend is reported to you.
