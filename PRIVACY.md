@@ -21,7 +21,7 @@ Everything is in one SQLite file, `/var/lib/amp-tg-bot/players.db`. It is **not 
 
 | Destination | What |
 |---|---|
-| **Telegram** | the bot's messages to your chat: player names, IDs, play times, server status; to friends who subscribed: player names on their servers (no IDs) |
+| **Telegram** | 📦 a zip of a server's world, only to the chat that asked for it; the bot's messages to your chat: player names, IDs, play times, server status; to friends who subscribed: player names on their servers (no IDs) |
 | **Telegram group with a chat bridge** | the bridged Minecraft server's chat (nick and message); the other way, the group members' first names and messages go into the game chat |
 | **GitHub** | only for `/update` and `/version`: an ordinary request for the latest release, no personal data |
 | **Modrinth** | mod searches, and for update checks the SHA-1 of each `.jar` in `mods/` with the loader and Minecraft version |

@@ -30,13 +30,14 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.4.0"
+VERSION = "2.5.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -748,6 +749,31 @@ STRINGS = {
                      "🟢 <b>{name}</b> заходить на <b>{inst}</b> (онлайн: {n})"),
     # kopie: lista i przywracanie
     "btn_backups": ("🗂 Kopie", "🗂 Backups", "🗂 Бэкапы", "🗂 Бекапи"),
+    # pobieranie swiata
+    "btn_world": ("📦 Pobierz świat", "📦 Download world", "📦 Скачать мир", "📦 Завантажити світ"),
+    "world_working": ("⏳ Pakuję świat {world}…", "⏳ Packing the world {world}…", "⏳ Упаковываю мир {world}…",
+                      "⏳ Пакую світ {world}…"),
+    "world_caption": ("🌍 {inst} – świat {world}, ostatni zapis gry: {when}",
+                      "🌍 {inst} – world {world}, last game save: {when}",
+                      "🌍 {inst} – мир {world}, последнее сохранение игры: {when}",
+                      "🌍 {inst} – світ {world}, останнє збереження гри: {when}"),
+    "world_parts": ("📦 Zip ma {size} MB, a bot może wysłać do 50 MB – idzie w {n} częściach. Pobierz wszystkie i "
+                    "otwórz pierwszą (.001) w 7-Zipie albo złącz: <code>cat {file}.0* &gt; {file}</code>",
+                    "📦 The zip has {size} MB and a bot can send up to 50 MB – it comes in {n} parts. Download all and "
+                    "open the first (.001) in 7-Zip, or join them: <code>cat {file}.0* &gt; {file}</code>",
+                    "📦 Zip весит {size} МБ, а бот может отправить до 50 МБ – отправляю {n} частями. Скачай все и "
+                    "открой первую (.001) в 7-Zip или склей: <code>cat {file}.0* &gt; {file}</code>",
+                    "📦 Zip важить {size} МБ, а бот може надіслати до 50 МБ – надсилаю {n} частинами. Завантаж усі й "
+                    "відкрий першу (.001) у 7-Zip або склей: <code>cat {file}.0* &gt; {file}</code>"),
+    "world_sent": ("✅ Wysłane: {file} ({size} MB).", "✅ Sent: {file} ({size} MB).",
+                   "✅ Отправлено: {file} ({size} МБ).",
+                   "✅ Надіслано: {file} ({size} МБ)."),
+    "world_none": ("Nie znalazłem świata tej instancji.", "I couldn't find this instance's world.",
+                   "Не нашёл мир этого инстанса.", "Не знайшов світ цього інстансу."),
+    "world_busy": ("⚠️ Gra zapisywała świat przez cały czas pakowania – spróbuj za minutę.",
+                   "⚠️ The game kept saving the world while I packed it – try again in a minute.",
+                   "⚠️ Игра всё время сохраняла мир, пока я его упаковывал – попробуй через минуту.",
+                   "⚠️ Гра весь час зберігала світ, поки я його пакував – спробуй за хвилину."),
     "bk_title": ("🗂 <b>{name}</b> – kopie (najnowsze u góry). Dotknij, żeby przywrócić:",
                  "🗂 <b>{name}</b> – backups (newest first). Tap one to restore:",
                  "🗂 <b>{name}</b> – бэкапы (новые сверху). Нажми, чтобы восстановить:",
@@ -3483,6 +3509,115 @@ def whitelist_info(name):
     return {"on": on, "players": players}
 
 
+# ---------- swiat gry jako zip na Telegramie ----------
+
+TG_FILE_LIMIT = 49 * 1024 * 1024  # bot moze wyslac plik do 50 MB
+TG_PART = 45 * 1024 * 1024  # wiekszy zip idzie w czesciach .001, .002, ...
+
+
+def world_source(name):
+    """
+    Biezacy swiat instancji: (nazwa, [sciezki]) albo None. Valheim: najnowszy swiat w worlds_local - folder (nowy
+    format: *.chunk i _main.N.*) albo para .fwl + .db (stary) - bez kopii (_backup) i .old. Minecraft: folder
+    z level-name w server.properties (+ _nether i _the_end, gdy sa osobno).
+    """
+    root = os.path.join(INSTANCES_DIR, name)
+    mc = os.path.join(root, "Minecraft")
+    if os.path.isdir(mc):
+        level = read_kvp(os.path.join(mc, "server.properties")).get("level-name", "").strip() or "world"
+        paths = [p for p in (os.path.join(mc, level + s) for s in ("", "_nether", "_the_end")) if os.path.isdir(p)]
+        return (level, paths) if paths else None
+    for depth in ("*", "*/*", "*/*/*", "*/*/*/*"):
+        for local in sorted(glob.glob(os.path.join(root, depth, "worlds_local"))):
+            best = None
+            for entry in sorted(os.listdir(local)):
+                path = os.path.join(local, entry)
+                if "_backup" in entry or entry.endswith(".old") or entry.startswith("."):
+                    continue
+                if os.path.isdir(path):
+                    found = (entry, [path])
+                elif entry.endswith(".fwl") and os.path.isfile(path[:-4] + ".db"):
+                    found = (entry[:-4], [path, path[:-4] + ".db"])
+                else:
+                    continue
+                mtime = max(os.path.getmtime(p) for p in found[1])
+                if best is None or mtime > best[0]:
+                    best = (mtime, found)
+            if best:
+                return best[1]
+    return None
+
+
+def world_files(paths):
+    """[(sciezka, nazwa w zipie)]: foldery z cala zawartoscia (bez session.lock Minecrafta) albo pojedyncze pliki."""
+    out = []
+    for p in paths:
+        if not os.path.isdir(p):
+            out.append((p, os.path.basename(p)))
+            continue
+        base = os.path.dirname(p)
+        for d, dirs, files in os.walk(p):
+            dirs.sort()
+            for f in sorted(files):
+                if f != "session.lock":
+                    out.append((os.path.join(d, f), os.path.relpath(os.path.join(d, f), base)))
+    return out
+
+
+def files_state(files):
+    return [(arc, os.path.getsize(p), os.path.getmtime(p)) for p, arc in files]
+
+
+def pack_world(paths, dest, tries=3):
+    """
+    Zip swiata bez zatrzymywania gry: gdy w trakcie pakowania gra cos zapisala (inne pliki, rozmiary, czasy),
+    pakujemy jeszcze raz. Zwraca czas ostatniego zapisu gry albo None, gdy za kazdym razem cos sie zmienilo.
+    """
+    for attempt in range(tries):
+        if attempt:
+            time.sleep(3)
+        try:
+            files = world_files(paths)
+            before = files_state(files)
+            with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+                for path, arc in files:
+                    z.write(path, arc)
+            if files_state(world_files(paths)) == before:
+                return max((m for _, _, m in before), default=None)
+        except (OSError, ValueError):  # plik zniknal albo zmienil sie w trakcie - kolejna proba
+            continue
+    return None
+
+
+def split_file(path, size=None):
+    """Plik -> czesci path.001, path.002, ... (7-Zip otwiera je od pierwszej)."""
+    size, parts = size or TG_PART, []
+    with open(path, "rb") as f:
+        while chunk := f.read(size):
+            part = f"{path}.{len(parts) + 1:03d}"
+            with open(part, "wb") as out:
+                out.write(chunk)
+            parts.append(part)
+    return parts
+
+
+def send_document(chat_id, path, filename, caption=""):
+    """Plik na czat (multipart, botem, ktory wlasnie odpowiada); bledy bez URL-a - zawiera token."""
+    boundary = "amp-tg-bot-" + os.urandom(8).hex()
+    fields = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"}
+    body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+                    for k, v in fields.items() if v)
+    safe = re.sub(r"[^\w.-]", "_", filename)
+    with open(path, "rb") as f:
+        head = (f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{safe}"\r\n'
+                "Content-Type: application/octet-stream\r\n\r\n")
+        body += head.encode() + f.read() + f"\r\n--{boundary}--\r\n".encode()
+    req = urllib.request.Request(f"https://api.telegram.org/bot{BOT['token'] or TOKEN}/sendDocument", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    with urllib.request.urlopen(req, timeout=600) as r:
+        return json.loads(r.read())
+
+
 def icon_path(name):
     """server-icon.png serwera Minecraft (inne gry nie maja ikony w liscie serwerow) albo None."""
     mc = os.path.join(INSTANCES_DIR, name, "Minecraft")
@@ -3702,7 +3837,7 @@ SETTINGS_PAGE = 10
 # bk/bkr/bk! (kopie i przywracanie), sub (subskrypcje znajomego), nw/nw! (nowa instancja)
 SERVER_BUTTONS = ("srv:", "do:", "do!:", "dw:", "dc:", "pl:", "pa:", "pa!:", "con:", "con!:", "pw:", "pws:", "pw!:",
                   "ub:", "ub!:", "md:", "mda:", "mdr:", "mdi:", "mdu:", "mdU:", "mdx:", "ic:", "bk:", "bkr:", "bk!:",
-                  "sub:", "nw:", "nw!:", "wl:", "wla:", "wlr:", "wlt:", "tn:", "tnc:")
+                  "sub:", "nw:", "nw!:", "wl:", "wla:", "wlr:", "wlt:", "tn:", "tnc:", "wd:")
 # ustawienia, ktorych znajomy nie widzi: argumenty Javy / linia startowa / sciezki / pobieranie = uruchomienie
 # dowolnego kodu na maszynie; porty, IP, RCON, Steam, typ i wersja serwera, mody, pamiec, kopie, harmonogram
 FRIEND_SETTINGS_DENY = re.compile(
@@ -4205,7 +4340,7 @@ class Commands:
             return True
         kind, _, rest = data.partition(":")
         if kind not in ("srv", "do", "do!", "dw", "dc", "pl", "pa", "pa!", "ub", "ub!", "ic", "sub", "wl", "wla", "wlr",
-                        "wlt") + tuple(
+                        "wlt", "wd") + tuple(
                 k[:-1] for k in SETTINGS_KINDS):
             return False
         return rest.rsplit(":", 1)[-1] in self.scope
@@ -4874,6 +5009,8 @@ class Commands:
             extra.append(self.btn("btn_backups", f"bk:{name}", lang))
         if self.scope is None:
             extra.append(self.btn("btn_tunnel", f"tn:{name}", lang))
+        if world_source(name):  # swiat do pobrania: admin i znajomy na swoim serwerze
+            extra.append(self.btn("btn_world", f"wd:{name}", lang))
         if extra:
             rows += [extra[i:i + 3] for i in range(0, len(extra), 3)]
         if self.scope is not None and self.uid:  # znajomy: powiadomienia o tym serwerze
@@ -4911,6 +5048,8 @@ class Commands:
             return self.settings_callback(data, user, chat, lang)
         if kind in ("wl", "wla", "wlr", "wlt"):
             return self.whitelist_callback(kind, rest, user, chat, lang)
+        if kind == "wd":
+            return self.world_download(rest, user, chat, lang)
         if kind in ("tn", "tnc"):
             return self.tunnel_callback(kind, rest, chat, lang) if self.scope is None else self.servers_view(lang)
         if kind == "sub":
@@ -5018,6 +5157,57 @@ class Commands:
         if not idx.isdigit() or int(idx) >= len(players) or not MC_NICK.fullmatch(players[int(idx)]):
             return self.whitelist_view(name, chat, lang)
         return self.whitelist_command(user, chat, name, f"whitelist remove {players[int(idx)]}", lang)
+
+    # ---------- swiat jako zip (admin i znajomi na swoich serwerach) ----------
+
+    def world_download(self, name, user, chat, lang):
+        """Zip biezacego swiata na ten czat; Minecraft: save-off + save-all przed pakowaniem, save-on po."""
+        src = world_source(name)
+        if not src:
+            return self.server_view(name, lang, note=t("world_none", lang))
+        world, paths = src
+        send(t("world_working", lang, world=esc(world)), chat)
+        minecraft = False
+        if os.path.isdir(os.path.join(INSTANCES_DIR, name, "Minecraft")):
+            try:
+                inst = self.amp.find(name)
+                if inst["running"] and inst["state"] == 20:  # serwer zapisuje wszystko i wstrzymuje zapis
+                    self.amp.console(name, "save-off")
+                    minecraft = True
+                    self.amp.console(name, "save-all flush")
+            except Exception as e:
+                log(f"save-all {name}: {e}")
+        friendly = FRIENDLY.get(name, name)
+        filename = re.sub(r"[^\w.-]", "_", f"{friendly}-{world}-{datetime.now():%Y%m%d-%H%M}.zip")
+        tmp = tempfile.mkdtemp(prefix="amp-tg-world-")
+        try:
+            zpath = os.path.join(tmp, filename)
+            try:
+                saved = pack_world(paths, zpath)
+            finally:
+                if minecraft:
+                    try:
+                        self.amp.console(name, "save-on")
+                    except Exception as e:
+                        log(f"save-on {name}: {e}")
+            if saved is None:
+                return self.server_view(name, lang, note=t("world_busy", lang))
+            size = os.path.getsize(zpath)
+            caption = t("world_caption", lang, inst=esc(friendly), world=esc(world), when=ts(saved))
+            if size <= TG_FILE_LIMIT:
+                send_document(chat, zpath, filename, caption)
+            else:
+                parts = split_file(zpath)
+                send(t("world_parts", lang, size=f"{size / 1e6:.0f}", n=len(parts), file=esc(filename)), chat)
+                for i, part in enumerate(parts):
+                    send_document(chat, part, os.path.basename(part), caption if i == 0 else "")
+        except Exception as e:  # bez tresci bledu z URL-em (token)
+            return self.server_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "code", None)
+                                                                                    or type(e).__name__)))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+        self.audit(user, chat, f"📦 {world}", name)
+        return self.server_view(name, lang, note=t("world_sent", lang, file=esc(filename), size=f"{size / 1e6:.1f}"))
 
     # ---------- adres z zewnatrz (tunel playit) - tylko admin ----------
 

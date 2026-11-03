@@ -1788,3 +1788,132 @@ def test_minecraft_whitelist(env, ui, mod_instances):
     ui.amp.insts["Mc01"]["state"] = 0
     text, _ = ui.click("wlt:Mc01")
     assert "musi działać" in text and ui.say()[-1] == "whitelist add Builder_7"
+
+
+# ---------- 2.5.0: swiat jako zip na Telegramie ----------
+
+def make_valheim_worlds(root):
+    """worlds_local jak w nowym Valheimie: folder swiata, kopie (_backup) i stare pliki .old."""
+    import os
+    local = root / "Valheim01" / "Valheim" / "896660" / "Saves" / "worlds_local"
+    world = local / "Midgard"
+    world.mkdir(parents=True)
+    for name, data in [("00_01__0_1.chunk", b"chunk" * 100), ("_main.7.db2", b"db"), ("_main.7.fwl2", b"fwl"),
+                       ("_main.7.chunks", b"list"), ("_main.7.ok", b"ok")]:
+        (world / name).write_bytes(data)
+    (local / "Midgard_backup_auto-20990101-000000").mkdir()  # nowsza kopia - nie ona
+    (local / "Midgard_backup_auto-20990101-000000" / "_main.6.db2").write_bytes(b"old")
+    (local / "Midgard.db.old").write_bytes(b"x")
+    (local / "Midgard.fwl.old").write_bytes(b"x")
+    os.utime(world, (1_000_000, 1_000_000))
+    for f in world.iterdir():
+        os.utime(f, (1_700_000_000, 1_700_000_000))
+    return local, world
+
+
+def test_world_source_valheim_and_minecraft(mod_instances):
+    root, _ = mod_instances
+    local, world = make_valheim_worlds(root)
+    assert bot.world_source("Valheim01") == ("Midgard", [str(world)])
+    import shutil
+    shutil.rmtree(world)
+    (local / "Old.fwl").write_bytes(b"f")
+    (local / "Old.db").write_bytes(b"d")
+    assert bot.world_source("Valheim01") == ("Old", [str(local / "Old.fwl"), str(local / "Old.db")])  # stary format
+
+    mc = root / "Mc01" / "Minecraft"
+    assert bot.world_source("Mc01") is None
+    (mc / "server.properties").write_text("level-name=Kraina\n")
+    (mc / "Kraina" / "region").mkdir(parents=True)
+    (mc / "Kraina_nether").mkdir()
+    assert bot.world_source("Mc01") == ("Kraina", [str(mc / "Kraina"), str(mc / "Kraina_nether")])
+    assert bot.world_source("Terraria01") is None
+
+
+def test_pack_world_retries_while_game_saves(mod_instances, tmp_path, monkeypatch):
+    import zipfile
+    root, _ = mod_instances
+    _, world = make_valheim_worlds(root)
+    (world / "session.lock").write_bytes(b"lock")
+    dest = tmp_path / "w.zip"
+    when = bot.pack_world([str(world)], str(dest))
+    assert when == 1_700_000_000
+    names = zipfile.ZipFile(dest).namelist()
+    assert "Midgard/_main.7.db2" in names and "Midgard/00_01__0_1.chunk" in names
+    assert "Midgard/session.lock" not in names
+
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    counter = iter(range(100))
+    monkeypatch.setattr(bot, "files_state", lambda files: [next(counter)])  # gra zapisuje caly czas
+    assert bot.pack_world([str(world)], str(dest)) is None
+
+
+def test_send_document_multipart(tmp_path, monkeypatch):
+    sent = []
+
+    class Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            pass
+
+        def read(self):
+            return b'{"ok": true}'
+
+    monkeypatch.setattr(bot, "TOKEN", "123:SECRET")
+    monkeypatch.setattr(bot.urllib.request, "urlopen", lambda req, timeout=0: sent.append(req) or Resp())
+    f = tmp_path / "x.zip"
+    f.write_bytes(b"PK\x03\x04zipdata")
+    assert bot.send_document(42, str(f), "Świat 1.zip", "🌍 <b>x</b>") == {"ok": True}
+    req = sent[0]
+    assert req.full_url == "https://api.telegram.org/bot123:SECRET/sendDocument"
+    assert b'name="chat_id"\r\n\r\n42' in req.data and b"PK\x03\x04zipdata" in req.data
+    assert b'filename="_wiat_1.zip"' in req.data or b'filename="\xc5\x9awiat_1.zip"' in req.data
+    assert "boundary=" in req.headers["Content-type"]
+
+
+def test_world_download_from_telegram(env, ui, mod_instances, monkeypatch):
+    import zipfile
+    root, _ = mod_instances
+    make_valheim_worlds(root)
+    docs = []
+
+    def fake_document(chat, path, filename, caption=""):
+        data = open(path, "rb").read()
+        names = zipfile.ZipFile(path).namelist() if path.endswith(".zip") else []  # czesci .001 to nie caly zip
+        docs.append({"chat": chat, "file": filename, "caption": caption, "names": names, "size": len(data)})
+
+    monkeypatch.setattr(bot, "send_document", fake_document)
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    text, markup = ui.click("srv:Valheim01", friend)
+    assert "wd:Valheim01" in str(markup)  # znajomy na swoim serwerze: tak
+    text, _ = ui.click("wd:Valheim01", friend)
+    assert len(docs) == 1 and docs[0]["chat"] == 42 and "Midgard/_main.7.db2" in docs[0]["names"]
+    assert docs[0]["file"].startswith("Valheim01-Midgard-") and "Midgard" in docs[0]["caption"]
+    assert "✅ Wysłane" in text
+    assert any(chat is None and "📦 Midgard" in msg for chat, msg, _ in ui.sent)  # admin wie, kto pobral
+    n = len(docs)
+    ui.click("wd:Mc01", friend)  # cudzy serwer
+    assert len(docs) == n
+
+    monkeypatch.setattr(bot, "TG_FILE_LIMIT", 100)
+    monkeypatch.setattr(bot, "TG_PART", 60)
+    docs.clear()
+    ui.click("wd:Valheim01")
+    assert len(docs) >= 2 and docs[0]["file"].endswith(".zip.001") and docs[1]["caption"] == ""
+    assert sum(d["size"] for d in docs) > 100 and any("częściach" in msg for _, msg, _ in ui.sent)
+
+
+def test_world_download_minecraft_pauses_saving(env, ui, mod_instances, monkeypatch):
+    root, _ = mod_instances
+    mc = root / "Mc01" / "Minecraft"
+    (mc / "world" / "region").mkdir(parents=True)
+    (mc / "world" / "level.dat").write_bytes(b"level")
+    monkeypatch.setattr(bot, "send_document", lambda *a, **k: None)
+    ui.click("wd:Mc01")
+    assert ui.say() == ["save-off", "save-all flush", "save-on"]  # spojny zapis bez zatrzymywania serwera
+    ui.amp.insts["Mc01"]["state"] = 0
+    ui.click("wd:Mc01")
+    assert ui.say() == ["save-off", "save-all flush", "save-on"]  # serwer zatrzymany - pliki sa juz zapisane

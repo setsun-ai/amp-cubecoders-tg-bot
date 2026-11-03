@@ -23,6 +23,7 @@ What the code does for you:
 - Player names from game logs are HTML-escaped before they are sent, so a nickname can't inject Telegram formatting or links.
 - **Restoring backups and creating instances are admin only.** A restore always backs up the current state first. To create instances the bot's AMP role needs *Create Instance* – don't give it *Delete Instances*; the bot never deletes an instance.
 - **Chat bridge:** only an admin can link a group (`/bridge`). Everyone in that group can then write into the game chat, but only as `tellraw` text (JSON, control characters removed) – a message can't become a console command. Link only groups you trust.
+- **📦 World download:** a friend can download the world of the servers you gave them (it can contain their and others' buildings, chests and player data) - you get a message about every download. The bot only reads the world, zips it in a temporary folder and deletes the zip after sending.
 - **Whitelist:** nicks are checked against Minecraft's rules (3-16 letters, digits, `_`) before a `whitelist add/remove` reaches the console, so friends can manage it without a console.
 - Automatic actions are off by default: `CRASH_RESTART` (one start after a crash) and `GAME_AUTO_UPDATE` (update when nobody plays).
 - Mod updates download from Modrinth and Thunderstore, just like installing a mod – a mod is code running on your machine.
