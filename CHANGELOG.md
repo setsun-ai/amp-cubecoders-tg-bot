@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.7.0 (unreleased)
+## 2.7.0 (2026-11)
 
 - **🧩 Menu of tiles, like moodle-sync.** `/menu` (and `/start`) opens one message with tiles: 🎮 Servers, 👥 Online, 📊 Week, 📜 History, 🖥 Status, 🎯 Dota, 🔔 Updates, 👫 Friends, 🌐 Language and 🛠 Bot ▸ (version, update, roll back, commands). An answer replaces the menu with **↩️ Menu**; Servers and Friends open in it and have ↩️ Menu too; updates, Dota, language and the bot actions work as if typed. Friends get their own tiles (Servers, Online, History, Week), and an admin tile they tap says "🔒 Only the admin can do this". After picking a language you get the menu right away.
 - **A short list under /**: just `/menu` and `/help` (friends: `/menu`) instead of 15 commands. Every command still works when typed, and `/help` lists them all. `/start` no longer means `/help`.
