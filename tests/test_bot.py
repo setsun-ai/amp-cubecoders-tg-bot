@@ -1861,16 +1861,31 @@ def test_send_document_multipart(tmp_path, monkeypatch):
         def read(self):
             return b'{"ok": true}'
 
+    def upload(req, timeout=0):  # jak http.client: czyta tresc kawalek po kawalku
+        chunks = list(req.data)
+        sent.append((req, chunks, b"".join(chunks)))
+        return Resp()
+
     monkeypatch.setattr(bot, "TOKEN", "123:SECRET")
-    monkeypatch.setattr(bot.urllib.request, "urlopen", lambda req, timeout=0: sent.append(req) or Resp())
+    monkeypatch.setattr(bot.urllib.request, "urlopen", upload)
     f = tmp_path / "x.zip"
     f.write_bytes(b"PK\x03\x04zipdata")
     assert bot.send_document(42, str(f), "Świat 1.zip", "🌍 <b>x</b>") == {"ok": True}
-    req = sent[0]
+    req, _, body = sent[0]
     assert req.full_url == "https://api.telegram.org/bot123:SECRET/sendDocument"
-    assert b'name="chat_id"\r\n\r\n42' in req.data and b"PK\x03\x04zipdata" in req.data
-    assert b'filename="_wiat_1.zip"' in req.data or b'filename="\xc5\x9awiat_1.zip"' in req.data
-    assert "boundary=" in req.headers["Content-type"]
+    assert b'name="chat_id"\r\n\r\n42' in body and b"PK\x03\x04zipdata" in body
+    assert b'filename="_wiat_1.zip"' in body or b'filename="\xc5\x9awiat_1.zip"' in body
+    assert "boundary=" in req.headers["Content-type"] and int(req.headers["Content-length"]) == len(body)
+
+    # czesc duzego pliku: tylko wycinek, kawalkami (nie caly plik w pamieci), botem podanym wprost
+    big = bytes(range(256)) * (3 * 4096 + 7)
+    f.write_bytes(big)
+    with bot.via("777:FRIENDS"):
+        bot.send_document(42, str(f), "x.zip.002", token="555:OTHER", offset=1000, length=2_000_000)
+    req, chunks, body = sent[1]
+    assert req.full_url == "https://api.telegram.org/bot555:OTHER/sendDocument"
+    assert big[1000:2_001_000] in body and big[999:2_001_000] not in body and big[1000:2_001_001] not in body
+    assert int(req.headers["Content-length"]) == len(body) and max(map(len, chunks)) <= 1024 * 1024
 
 
 def test_world_download_from_telegram(env, ui, mod_instances, monkeypatch):

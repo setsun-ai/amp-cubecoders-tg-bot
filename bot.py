@@ -3601,19 +3601,34 @@ def split_file(path, size=None):
     return parts
 
 
-def send_document(chat_id, path, filename, caption=""):
-    """Plik na czat (multipart, botem, ktory wlasnie odpowiada); bledy bez URL-a - zawiera token."""
+def send_document(chat_id, path, filename, caption="", token=None, offset=0, length=None):
+    """
+    Plik (albo jego wycinek od `offset`, `length` bajtow) na czat: multipart wysylany kawalkami, bez calego pliku
+    w pamieci. token=None - bot, ktory wlasnie odpowiada; watek w tle podaje go wprost. Bledy bez URL-a (token).
+    """
     boundary = "amp-tg-bot-" + os.urandom(8).hex()
     fields = {"chat_id": str(chat_id), "caption": caption, "parse_mode": "HTML"}
-    body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
-                    for k, v in fields.items() if v)
     safe = re.sub(r"[^\w.-]", "_", filename)
-    with open(path, "rb") as f:
-        head = (f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{safe}"\r\n'
-                "Content-Type: application/octet-stream\r\n\r\n")
-        body += head.encode() + f.read() + f"\r\n--{boundary}--\r\n".encode()
-    req = urllib.request.Request(f"https://api.telegram.org/bot{BOT['token'] or TOKEN}/sendDocument", data=body,
-                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    head = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+                    for k, v in fields.items() if v)
+    head += (f'--{boundary}\r\nContent-Disposition: form-data; name="document"; filename="{safe}"\r\n'
+             "Content-Type: application/octet-stream\r\n\r\n").encode()
+    tail = f"\r\n--{boundary}--\r\n".encode()
+    size = max(0, min(os.path.getsize(path) - offset, length if length is not None else float("inf")))
+
+    def body():
+        yield head
+        with open(path, "rb") as f:
+            f.seek(offset)
+            left = size
+            while left and (chunk := f.read(min(left, 1024 * 1024))):
+                left -= len(chunk)
+                yield chunk
+        yield tail
+
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token or BOT['token'] or TOKEN}/sendDocument",
+                                 data=body(), headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                                                       "Content-Length": str(len(head) + int(size) + len(tail))})
     with urllib.request.urlopen(req, timeout=600) as r:
         return json.loads(r.read())
 
