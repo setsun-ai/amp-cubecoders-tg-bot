@@ -19,6 +19,7 @@ Uzycie:
   bot.py --version    - numer wersji
 """
 import collections
+import errno
 import glob
 import html
 import ipaddress
@@ -33,6 +34,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -298,8 +300,57 @@ STRINGS = {
                    "✅ У тебе є доступ до серверів: {list}. Відкрий /servers."),
     "fr_revoked": ("ℹ️ Twój dostęp do serwerów został usunięty.", "ℹ️ Your access to the servers was removed.",
                    "ℹ️ Твой доступ к серверам удалён.", "ℹ️ Твій доступ до серверів видалено."),
-    "error": ("❌ Coś poszło nie tak, szczegóły w logu bota.", "❌ Something went wrong, see the bot log.",
-              "❌ Что-то пошло не так, подробности в логе бота.", "❌ Щось пішло не так, подробиці в лозі бота."),
+    # nieoczekiwany blad: osoba wie, co sie nie udalo, admin dostaje szczegoly
+    "error_user": ("❌ Nie udało się: {what}. Admin dostał szczegóły.",
+                   "❌ That didn't work: {what}. The admin got the details.",
+                   "❌ Не получилось: {what}. Админ получил подробности.",
+                   "❌ Не вдалося: {what}. Адмін отримав подробиці."),
+    "error_admin": ("⚠️ Błąd u {who}: {what} – {err}", "⚠️ Error for {who}: {what} – {err}",
+                    "⚠️ Ошибка у {who}: {what} – {err}", "⚠️ Помилка в {who}: {what} – {err}"),
+    "error_self": ("❌ Nie udało się: {what} – {err}", "❌ That didn't work: {what} – {err}",
+                   "❌ Не получилось: {what} – {err}", "❌ Не вдалося: {what} – {err}"),
+    # przycisk, ktory nic nie zrobi: okienko z powodem
+    "deny_server": ("🔒 Ten serwer nie jest Twój – poproś admina o dostęp.",
+                    "🔒 This server isn't yours – ask the admin for access.",
+                    "🔒 Это не твой сервер – попроси админа о доступе.",
+                    "🔒 Це не твій сервер – попроси адміна про доступ."),
+    "deny_admin": ("🔒 To może tylko admin.", "🔒 Only the admin can do this.", "🔒 Это может только админ.",
+                   "🔒 Це може лише адмін."),
+    # bledy zwyklymi slowami (explain)
+    "why_timeout": ("serwer nie odpowiedział na czas – spróbuj za minutę",
+                    "the server didn't answer in time – try again in a minute",
+                    "сервер не ответил вовремя – попробуй через минуту",
+                    "сервер не відповів вчасно – спробуй за хвилину"),
+    "why_refused": ("nic nie odpowiada pod tym adresem (wyłączony?)", "nothing answers at that address (switched off?)",
+                    "по этому адресу ничего не отвечает (выключен?)",
+                    "за цією адресою нічого не відповідає (вимкнено?)"),
+    "why_dns": ("nie znam adresu serwera (DNS) – sprawdź internet",
+                "can't find the server's address (DNS) – check the internet",
+                "не нахожу адрес сервера (DNS) – проверь интернет",
+                "не знаходжу адресу сервера (DNS) – перевір інтернет"),
+    "why_offline": ("brak połączenia z serwerem – sprawdź internet", "no connection to the server – check the internet",
+                    "нет связи с сервером – проверь интернет", "немає зв'язку з сервером – перевір інтернет"),
+    "why_http_server": ("błąd po stronie serwera ({code}) – spróbuj później",
+                        "error on the server's side ({code}) – try again later",
+                        "ошибка на стороне сервера ({code}) – попробуй позже",
+                        "помилка на боці сервера ({code}) – спробуй пізніше"),
+    "why_http_denied": ("odmowa dostępu ({code})", "access denied ({code})", "доступ запрещён ({code})",
+                        "доступ заборонено ({code})"),
+    "why_http_404": ("nie ma takiego adresu (404)", "no such address (404)", "такого адреса нет (404)",
+                     "такої адреси немає (404)"),
+    "why_http_busy": ("za dużo zapytań – spróbuj za kilka minut", "too many requests – try again in a few minutes",
+                      "слишком много запросов – попробуй через несколько минут",
+                      "забагато запитів – спробуй за кілька хвилин"),
+    "why_http": ("serwer odpowiedział błędem {code}", "the server answered with error {code}",
+                 "сервер ответил ошибкой {code}", "сервер відповів помилкою {code}"),
+    "why_bad_answer": ("serwer dał dziwną odpowiedź (nie to, czego się spodziewałem)",
+                       "the server gave a strange answer (not what I expected)",
+                       "сервер дал странный ответ (не то, что я ждал)",
+                       "сервер дав дивну відповідь (не те, що я чекав)"),
+    "why_disk_full": ("brak miejsca na dysku laptopa", "no space left on the laptop's disk",
+                      "нет места на диске ноутбука", "немає місця на диску ноутбука"),
+    "why_unknown": ("nieoczekiwany błąd ({name})", "unexpected error ({name})", "неожиданная ошибка ({name})",
+                    "неочікувана помилка ({name})"),
     "lang_choose": ("🌐 Wybierz język:", "🌐 Choose a language:", "🌐 Выбери язык:", "🌐 Обери мову:"),
     "lang_set": ("✅ Język: {name}", "✅ Language: {name}", "✅ Язык: {name}", "✅ Мова: {name}"),
     "help_title": ("🤖 <b>Bot AMP {v}</b> – komendy:", "🤖 <b>AMP bot {v}</b> – commands:",
@@ -2391,7 +2442,7 @@ class AmpWatcher:
         try:
             self.restore_phase(op, "stopping" if was_running else "backup")
         except Exception as e:
-            self.finish(op, self.op_text(op, None, None, "failed", t("amp_error", lang, err=esc(e))))
+            self.finish(op, self.op_text(op, None, None, "failed", t("amp_error", lang, err=explain(e, lang))))
             raise
         return op
 
@@ -2526,7 +2577,8 @@ class AmpWatcher:
                 try:
                     self.amp.action(op["act"], name)
                 except Exception as e:
-                    self.finish(op, self.op_text(op, inst, None, "failed", t("amp_error", op["lang"], err=esc(e))))
+                    err = t("amp_error", op["lang"], err=explain(e, op["lang"]))
+                    self.finish(op, self.op_text(op, inst, None, "failed", err))
                     continue
                 op.update(started=now, seen=set())
                 self.show(op, self.op_text(op, inst, None, None), now)
@@ -2548,7 +2600,7 @@ class AmpWatcher:
                 try:
                     result = self.restore_step(op, inst, state, bool(mine), now)
                 except Exception as e:
-                    result, extra = "failed", t("amp_error", op["lang"], err=esc(e))
+                    result, extra = "failed", t("amp_error", op["lang"], err=explain(e, op["lang"]))
                 if result is None and now - op["started"] > self.OP_TIMEOUT["restore"]:
                     result = "timeout"
             else:
@@ -2683,7 +2735,7 @@ class AmpWatcher:
                 with via(""):
                     self.track(name, "start", CHAT_ID, lang_for())
             except Exception as e:
-                send(t("amp_error", err=esc(e)))
+                send(t("amp_error", err=explain(e)))
         return True
 
     @staticmethod
@@ -2876,6 +2928,36 @@ ZIP_SKIP = {"icon.png", "readme.md", "changelog.md", "license", "license.md", "l
 
 class ModError(Exception):
     pass
+
+
+def explain(e, lang=None):
+    """
+    Blad -> zdanie dla czlowieka (HTML-bezpieczne, bez URL-i - bywa w nich token). Powod od AMP (AmpError) i nasze
+    ModError zostaja bez zmian: to juz sa zdania.
+    """
+    if isinstance(e, (AmpError, ModError)):
+        return esc(e)
+    if isinstance(e, urllib.error.HTTPError):
+        code = e.code
+        key = ("why_http_denied" if code in (401, 403) else "why_http_404" if code == 404 else
+               "why_http_busy" if code == 429 else "why_http_server" if code >= 500 else "why_http")
+        return t(key, lang, code=code)
+    network = isinstance(e, (urllib.error.URLError, ConnectionError))
+    if isinstance(e, urllib.error.URLError) and isinstance(e.reason, BaseException):
+        e = e.reason
+    if isinstance(e, TimeoutError):
+        return t("why_timeout", lang)
+    if isinstance(e, ConnectionRefusedError):
+        return t("why_refused", lang)
+    if isinstance(e, socket.gaierror):
+        return t("why_dns", lang)
+    if isinstance(e, OSError) and e.errno == errno.ENOSPC:
+        return t("why_disk_full", lang)
+    if network:
+        return t("why_offline", lang)
+    if isinstance(e, ValueError):  # takze json.JSONDecodeError
+        return t("why_bad_answer", lang)
+    return t("why_unknown", lang, name=type(e).__name__)
 
 
 def http_json(url, timeout=30, data=None):
@@ -3721,7 +3803,7 @@ class WorldJob:
                               length=TG_PART if len(offsets) > 1 else None)
             self.result = ("world_sent", {"file": esc(self.filename), "size": f"{size / 1e6:.1f}"})
         except Exception as e:  # bez tresci bledu z URL-em (token)
-            self.result = ("mod_error", {"err": esc(getattr(e, "code", None) or type(e).__name__)})
+            self.result = ("mod_error", {"err": explain(e, self.lang)})
         finally:
             shutil.rmtree(self.tmp, ignore_errors=True)
             self.done.set()
@@ -4183,9 +4265,29 @@ class Commands:
                     self.bridge_to_game(msg)  # grupa z mostem czatu: wiadomosc idzie do gry
             except Exception as e:
                 log(f"Blad obslugi {upd.get('update_id')}: {e}")
-                chat = (msg or upd.get("callback_query", {}).get("message", {})).get("chat", {}).get("id")
-                if chat:
-                    send(t("error", lang_for(chat)), chat)
+                self.report_error(upd, e)
+
+    def report_error(self, upd, e):
+        """Nieoczekiwany blad: osoba wie, co sie nie udalo, a admin dostaje szczegoly (admin sam - od razu je widzi)."""
+        cq = upd.get("callback_query") or {}
+        msg = upd.get("message") or {}
+        chat = (msg or cq.get("message") or {}).get("chat", {}).get("id")
+        if not chat:
+            return
+        user = cq.get("from") or msg.get("from") or {}
+        shown = (cq.get("message") or {}).get("reply_markup", {}).get("inline_keyboard", [])
+        buttons = [b for row in shown for b in row]
+        what = next((b["text"] for b in buttons if b.get("callback_data") == cq.get("data")), cq.get("data")) \
+            if cq else msg.get("text", "")[:40]
+        details = str(e)
+        for secret in (TOKEN, FRIENDS_TOKEN):
+            details = details.replace(secret, "…") if secret else details
+        err = f"{explain(e, lang_for(chat))} ({esc(type(e).__name__)}: {esc(details[:200])})"
+        if user.get("id") in ADMINS:
+            send(t("error_self", lang_for(chat), what=esc(what), err=err), chat)
+            return
+        send(t("error_user", lang_for(chat), what=esc(what)), chat)
+        send(t("error_admin", who=esc(self.who(user)), what=esc(what), err=err))
 
     @staticmethod
     def who(user):
@@ -4284,7 +4386,7 @@ class Commands:
             try:
                 latest = esc(latest_release())
             except Exception as e:
-                latest = t("check_failed", lang, err=getattr(e, "code", type(e).__name__))
+                latest = t("check_failed", lang, err=explain(e, lang))
             send(t("version", lang, v=VERSION, latest=latest), chat)
         elif cmd == "update":
             self.update(chat, lang, force="force" in args)
@@ -4305,7 +4407,7 @@ class Commands:
         try:
             insts = [i for i in self.amp.instances() if self.scope is None or i["name"] in self.scope]
         except Exception as e:
-            send(t("amp_error", lang, err=esc(e)), chat)
+            send(t("amp_error", lang, err=explain(e, lang)), chat)
             return
         if not insts:
             send(t("srv_none", lang), chat)
@@ -4373,7 +4475,7 @@ class Commands:
             profile = opendota(f"players/{account}")
             matches = opendota(f"players/{account}/recentMatches") or []
         except Exception as e:
-            send(t("dota_error", lang, err=esc(getattr(e, "code", e))), chat)
+            send(t("dota_error", lang, err=explain(e, lang)), chat)
             return
         name = ((profile or {}).get("profile") or {}).get("personaname")
         if not name:
@@ -4400,22 +4502,23 @@ class Commands:
         user = cq.get("from", {})
         chat = cq.get("message", {}).get("chat", {}).get("id")
         data = cq.get("data", "")
-        try:
-            tg_api("answerCallbackQuery", {"callback_query_id": cq["id"]})
+        self.scope = self.friend_scope(user)
+        picks_lang = self.scope is False and self.friend_bot and chat is not None and norm_lang(data[5:]) \
+            and data.startswith("lang:")  # nowa osoba wybiera jezyk przed prosba o dostep
+        refusal = None if picks_lang or chat is None else self.refusal(data, chat)
+        try:  # przycisk, ktory nic nie zrobi: okienko z powodem zamiast ciszy
+            tg_api("answerCallbackQuery", {"callback_query_id": cq["id"],
+                                           **({"text": refusal, "show_alert": "true"} if refusal else {})})
         except Exception:
             pass
-        self.scope = self.friend_scope(user)
-        if self.scope is False and self.friend_bot and chat is not None and norm_lang(data[5:]) \
-                and data.startswith("lang:"):  # nowa osoba wybrala jezyk: zapamietujemy i wysylamy prosbe
+        if picks_lang:  # zapamietujemy jezyk i wysylamy prosbe
             lang = norm_lang(data[5:])
             meta_set(self.db, f"lang:{chat}", lang)
             CHAT_LANGS[str(chat)] = lang
             edit(chat, cq["message"]["message_id"], t("lang_set", lang, name=LANGS[lang]))
             self.reject(user, chat)
             return
-        if self.scope is False or chat is None:
-            return
-        if self.scope is not None and not self.friend_may(data):
+        if refusal or chat is None:
             return
         if data.startswith("dr:") and self.scope is None:
             acc = data[3:]
@@ -4444,16 +4547,26 @@ class Commands:
             text, markup = self.servers_callback(data, user, chat, lang)
             edit(chat, cq["message"]["message_id"], text, markup)
 
-    def friend_may(self, data):
-        """Przyciski znajomego: jezyk, lista serwerow i jego instancje - bez hasel i bez /friends."""
+    def refusal(self, data, chat):
+        """Dlaczego ten przycisk nic nie zrobi (tekst okienka) albo None, gdy wolno."""
+        if self.scope is False:
+            return t("private", lang_for(chat))
+        if self.scope is None or self.friend_may(data):
+            return None
+        return t("deny_server" if self.friend_kind(data) else "deny_admin", lang_for(chat))
+
+    @staticmethod
+    def friend_kind(data):
+        """Przyciski znajomego: jezyk, lista serwerow i to, co wolno na jego instancjach - bez hasel i bez /friends."""
         if data.startswith("lang:") or data == "srv":
             return True
-        kind, _, rest = data.partition(":")
-        if kind not in ("srv", "do", "do!", "dw", "dc", "pl", "pa", "pa!", "ub", "ub!", "ic", "sub", "wl", "wla", "wlr",
-                        "wlt", "wd") + tuple(
-                k[:-1] for k in SETTINGS_KINDS):
-            return False
-        return rest.rsplit(":", 1)[-1] in self.scope
+        return data.partition(":")[0] in ("srv", "do", "do!", "dw", "dc", "pl", "pa", "pa!", "ub", "ub!", "ic", "sub",
+                                          "wl", "wla", "wlr", "wlt", "wd") + tuple(k[:-1] for k in SETTINGS_KINDS)
+
+    def friend_may(self, data):
+        if data.startswith("lang:") or data == "srv":
+            return True
+        return self.friend_kind(data) and data.partition(":")[2].rsplit(":", 1)[-1] in self.scope
 
     # ---------- /friends ----------
 
@@ -4496,7 +4609,8 @@ class Commands:
             try:
                 insts = self.amp.instances()
             except Exception as e:
-                return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "frl", lang)]]}
+                return (t("amp_error", lang, err=explain(e, lang)),
+                        {"inline_keyboard": [[self.btn("btn_back", "frl", lang)]]})
             current = (friend_get(self.db, uid) or {}).get("instances", [])
             self.cache[("fr", uid)] = {"insts": insts, "sel": set(current)}
             if kind == "fr":
@@ -4548,7 +4662,8 @@ class Commands:
         try:
             insts = self.amp.instances()
         except Exception as e:
-            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]}
+            return (t("amp_error", lang, err=explain(e, lang)),
+                    {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]})
         if self.scope is not None:  # znajomy widzi tylko przydzielone instancje
             insts = [i for i in insts if i["name"] in self.scope]
         new = [self.btn("btn_new", "new", lang)] if self.scope is None else []  # nowa instancja: tylko admin
@@ -4635,7 +4750,7 @@ class Commands:
         try:
             players = self.amp.users(name)
         except Exception as e:
-            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [back]}
+            return t("amp_error", lang, err=explain(e, lang)), {"inline_keyboard": [back]}
         self.cache[(str(chat), "players", name)] = players
         unban = [self.btn("act_unban", f"ub:{name}", lang)]
         if whitelist_info(name) is not None:  # Minecraft: whitelist obok unbana
@@ -4665,7 +4780,7 @@ class Commands:
             try:
                 out = self.amp.player_action(act, name, player)
             except Exception as e:
-                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(name, lang, note=t("amp_error", lang, err=explain(e, lang)))
             self.audit(user, chat, f"{t('act_' + act)} {player}", name)
             return self.server_view(name, lang, note=self.console_note(out, lang))
         if kind == "ub":
@@ -4679,7 +4794,7 @@ class Commands:
             try:
                 out = self.amp.player_action("unban", rest, wait["player"])
             except Exception as e:
-                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=explain(e, lang)))
             self.audit(user, chat, f"{t('act_unban')} {wait['player']}", rest)
             return self.server_view(rest, lang, note=self.console_note(out, lang))
         if kind == "con":
@@ -4693,14 +4808,14 @@ class Commands:
             try:
                 out = self.amp.console(rest, wait["cmd"])
             except Exception as e:
-                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=explain(e, lang)))
             self.audit(user, chat, f"⌨️ {wait['cmd']}", rest)
             return self.server_view(rest, lang, note=self.console_note(out, lang))
         if kind == "pw":
             try:
                 settings = self.amp.password_settings(rest)
             except Exception as e:
-                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=explain(e, lang)))
             self.cache[(str(chat), "pw", rest)] = settings
             back = [self.btn("btn_back", f"srv:{rest}", lang)]
             if not settings:
@@ -4724,7 +4839,7 @@ class Commands:
             try:
                 self.amp.set_config(rest, wait["node"], wait["value"])
             except Exception as e:
-                return self.server_view(rest, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(rest, lang, note=t("amp_error", lang, err=explain(e, lang)))
             self.audit(user, chat, f"🔑 {wait['setting']}", rest)
             return self.server_view(rest, lang, note=t("pw_done", lang))
         return self.servers_view(lang)
@@ -4754,7 +4869,7 @@ class Commands:
         try:
             updates, projects, found = mod_updates(target)
         except Exception as e:
-            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=explain(e, lang)))
         self.cache[(self.chat_key, "modupd", name)] = (updates, projects)
         if not updates:
             return self.mods_view(name, lang, note=t("mod_upd_none", lang, n=found, source=target["source"]))
@@ -4778,7 +4893,7 @@ class Commands:
         if done:
             self.audit(user, chat, "🧩 ⬆️ " + ", ".join(done), name)
         notes = ([t("mod_upd_done", lang, list=esc(", ".join(done))), t("mod_restart", lang)] if done else []) \
-            + [t("mod_error", lang, err=esc(e)) for e in errors]
+            + [t("mod_error", lang, err=explain(e, lang)) for e in errors]
         return self.mods_view(name, lang, note="\n".join(notes))
 
     def mods_callback(self, kind, rest, user, chat, lang):
@@ -4811,7 +4926,7 @@ class Commands:
             try:
                 remove_mod(target, entries[idx])
             except (OSError, ModError) as e:
-                return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(e)))
+                return self.mods_view(name, lang, note=t("mod_error", lang, err=explain(e, lang)))
             self.audit(user, chat, f"🧩 🗑 {entries[idx]}", name)
             return self.mods_view(name, lang, note=t("mod_removed", lang, mod=esc(entries[idx])) + "\n"
                                   + t("mod_restart", lang))
@@ -4825,7 +4940,7 @@ class Commands:
         try:
             done = install_mod(target, mod_id)
         except Exception as e:  # siec, brak wersji, zly zip - pokazujemy, nic nie psujemy
-            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=explain(e, lang)))
         self.audit(user, chat, "🧩 + " + ", ".join(done), name)
         return self.mods_view(name, lang, note=t("mod_installed", lang, list=esc(", ".join(done))) + "\n"
                               + t("mod_restart", lang))
@@ -4841,7 +4956,7 @@ class Commands:
         try:
             kind, found = mod_from_text(query, target)
         except Exception as e:
-            return self.mods_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "reason", e))))
+            return self.mods_view(name, lang, note=t("mod_error", lang, err=explain(e, lang)))
         if kind == "id":
             return self.mods_install(msg.get("from", {}), chat, name, target, found, found, lang)
         if not found:
@@ -4874,7 +4989,7 @@ class Commands:
             os.replace(icon_path(name) + ".part", icon_path(name))
         except Exception as e:  # bez URL-a w bledzie (token)
             text, markup = self.server_view(name, lang, note=e.args[0] if isinstance(e, ModError) else t(
-                "mod_error", lang, err=type(e).__name__))
+                "mod_error", lang, err=explain(e, lang)))
             send(text, chat, markup=markup)
             return
         finally:
@@ -4908,8 +5023,7 @@ class Commands:
             http_download(url, tmp)
             done = install_mod_file(target, doc.get("file_name") or "mod", tmp)
         except Exception as e:  # nie logujemy URL-a (token)
-            text, markup = self.mods_view(name, lang, note=t("mod_error", lang, err=esc(
-                e if isinstance(e, ModError) else type(e).__name__)))
+            text, markup = self.mods_view(name, lang, note=t("mod_error", lang, err=explain(e, lang)))
             send(text, chat, markup=markup)
             return
         finally:
@@ -4997,7 +5111,7 @@ class Commands:
         try:
             self.amp.set_config(name, s["node"], value)
         except Exception as e:
-            return self.setting_view(name, gi, si, lang, note=t("amp_error", lang, err=esc(e)))
+            return self.setting_view(name, gi, si, lang, note=t("amp_error", lang, err=explain(e, lang)))
         s["value"] = value
         new = self.setting_value(s, lang)
         self.audit(user, chat, f"⚙️ {s['name']}: {old} → {new}", name)
@@ -5040,7 +5154,7 @@ class Commands:
             try:
                 self.cache[key] = self.load_settings(name)
             except Exception as e:
-                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(name, lang, note=t("amp_error", lang, err=explain(e, lang)))
             if not self.cache[key]:
                 return self.server_view(name, lang, note=t("set_none", lang))
             if kind == "st":
@@ -5081,7 +5195,8 @@ class Commands:
         try:
             inst = next((i for i in self.amp.instances() if i["name"] == name), None)
         except Exception as e:
-            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
+            return (t("amp_error", lang, err=explain(e, lang)),
+                    {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]})
         if inst is None:
             return t("srv_none", lang), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
         emoji, state = amp_state(inst, lang)
@@ -5190,7 +5305,7 @@ class Commands:
         try:
             self.amp.action(act, name)
         except Exception as e:
-            return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+            return self.server_view(name, lang, note=t("amp_error", lang, err=explain(e, lang)))
         self.audit(user, chat, t("act_" + act), name)
         if self.watcher:
             self.watcher.track(name, act, chat, lang)
@@ -5246,7 +5361,7 @@ class Commands:
                 return self.whitelist_view(name, chat, lang, note=t("wl_need_running", lang))
             out = self.amp.console(name, command)
         except Exception as e:
-            return self.whitelist_view(name, chat, lang, note=t("amp_error", lang, err=esc(e)))
+            return self.whitelist_view(name, chat, lang, note=t("amp_error", lang, err=explain(e, lang)))
         self.audit(user, chat, f"📋 {command}", name)
         return self.whitelist_view(name, chat, lang, note=self.console_note(out, lang))
 
@@ -5368,7 +5483,7 @@ class Commands:
             try:
                 self.cache[key] = self.amp.backups(name)[:15]
             except Exception as e:
-                return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+                return self.server_view(name, lang, note=t("amp_error", lang, err=explain(e, lang)))
         backups = self.cache[key]
         if kind == "bk" or not idx.isdigit() or int(idx) >= len(backups):
             if not backups:
@@ -5388,7 +5503,7 @@ class Commands:
         try:
             self.watcher.restore(name, b, chat, lang)
         except Exception as e:
-            return self.server_view(name, lang, note=t("amp_error", lang, err=esc(e)))
+            return self.server_view(name, lang, note=t("amp_error", lang, err=explain(e, lang)))
         self.audit(user, chat, f"{t('act_restore')}: {ts(b['when'])} {b['title']}", name)
         self.cache.pop(key, None)
         return self.server_view(name, lang, note=t("op_started", lang, action=t("act_restore", lang)))
@@ -5414,7 +5529,8 @@ class Commands:
         try:
             self.amp.create_instance(wait["app"]["id"], wait["name"])
         except Exception as e:
-            return t("amp_error", lang, err=esc(e)), {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]}
+            return (t("amp_error", lang, err=explain(e, lang)),
+                    {"inline_keyboard": [[self.btn("btn_back", "srv", lang)]]})
         self.audit(user, chat, f"{t('act_create')}: {wait['app']['name']}", wait["name"])
         if self.watcher:
             self.watcher.create(wait["name"], chat, lang)
@@ -5428,7 +5544,7 @@ class Commands:
             try:
                 apps = self.amp.apps()
             except Exception as e:
-                return t("amp_error", lang, err=esc(e)), None
+                return t("amp_error", lang, err=explain(e, lang)), None
             q = text.lower()
             found = [a for a in apps if q in f"{a['name']} {a['module']}".lower()][:10]
             if not found:

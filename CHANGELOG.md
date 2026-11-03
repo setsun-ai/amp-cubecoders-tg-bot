@@ -2,6 +2,9 @@
 
 ## 2.6.0 (unreleased)
 
+- **A button that does nothing says why.** A friend who taps something that isn't theirs gets a pop-up "🔒 This server isn't yours – ask the admin for access", or "🔒 Only the admin can do this" (a stranger: "This is a private bot"), instead of nothing at all. Nothing changes and you get no message.
+- **Errors in plain words.** Instead of `HTTPError`, `TimeoutError` or `<urlopen error [Errno 61]>` every message says what happened: the server didn't answer in time, nothing answers at that address, no connection, access denied (401), the server's error (503), too many requests, a strange answer, no disk space. AMP's own reason stays as it is. One place does it for AMP, mods, Dota, updates and the world download.
+- **An unexpected error tells the person what failed** - "❌ That didn't work: 🟢 Valheim. The admin got the details." - instead of "see the bot log" they can't open, and you get who, which button and the error. When it happens to you, you get one message with the details. Bot tokens are cut out of the details.
 - **Buttons fit on a phone in every language.** Just before a message goes to Telegram, a row of buttons that doesn't fit is split into more rows (same order, nothing disappears) - e.g. the friends' "🔕 When the server is up" / "When someone joins" in Russian, or "🖼 Server icon" next to Mods and Backups. A single button that is still too long (a long server or mod name) is shortened in the middle, so the status at the start and the player count at the end stay visible. One rule for every menu, including future ones: `TG_ROW_CHARS` (42 characters per row, emoji count as two).
 
 ## 2.5.1 (2026-11)

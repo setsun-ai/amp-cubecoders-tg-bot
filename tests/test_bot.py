@@ -2060,3 +2060,92 @@ def test_buttons_fit_on_a_phone_in_every_language(env, ui, mod_instances, monkey
     ui.c.handle({"chat": {"id": 1}, "from": admin, "text": "/servers", "date": 1000})
     rows = [json.loads(p["reply_markup"])["inline_keyboard"] for _, p in sent if "reply_markup" in p][0]
     assert rows[0][0]["text"] == listed
+
+
+# ---------- komunikaty: odmowa i bledy zwyklymi slowami ----------
+
+def press(ui, data, user, markup=None):
+    message = {"chat": {"id": user["id"]}, "message_id": 7}
+    if markup:
+        message["reply_markup"] = markup
+    return {"id": "q", "from": user, "data": data, "message": message}
+
+
+def test_friend_is_told_why_a_button_does_nothing(env, ui, monkeypatch):
+    answers = []
+
+    def api(method, params=None, **k):
+        if method == "answerCallbackQuery":
+            answers.append(params or {})
+        return {}
+
+    monkeypatch.setattr(bot, "tg_api", api)
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend = {"id": 42, "first_name": "Kumpel"}
+    for data, expected in (("do:stop:Mc01", "nie jest Twój"), ("md:Valheim01", "tylko admin")):
+        n_edits, n_sent = len(ui.edits), len(ui.sent)
+        ui.c.handle_callback(press(ui, data, friend))
+        assert expected in answers[-1]["text"] and answers[-1]["show_alert"] == "true", data
+        assert len(ui.edits) == n_edits and len(ui.sent) == n_sent  # nic sie nie zmienia, admin nic nie dostaje
+    ui.c.handle_callback(press(ui, "srv", {"id": 99, "first_name": "Obcy"}))
+    assert "prywatny" in answers[-1]["text"]
+    ui.c.handle_callback(press(ui, "srv:Valheim01", friend))  # wolno: zwykle potwierdzenie, bez okienka
+    assert "text" not in answers[-1] and ui.edits[-1][0] == 42
+
+
+def test_unexpected_error_tells_the_friend_and_gives_admin_details(env, ui, monkeypatch):
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    friend, admin = {"id": 42, "first_name": "Kumpel"}, {"id": 1, "first_name": "Admin"}
+    monkeypatch.setattr(ui.c, "server_view", lambda *a, **k: {}["boom"])
+    shown = {"inline_keyboard": [[{"text": "🟢 Valheim", "callback_data": "srv:Valheim01"}]]}
+    ui.c.handle_updates([{"update_id": 5, "callback_query": press(ui, "srv:Valheim01", friend, shown)}], "")
+    to_friend = [m for chat, m, _ in ui.sent if chat == 42]
+    to_admin = [m for chat, m, _ in ui.sent if chat is None]
+    assert len(to_friend) == 1 and "🟢 Valheim" in to_friend[0] and "Admin dostał szczegóły" in to_friend[0]
+    assert "log" not in to_friend[0] and "KeyError" not in to_friend[0]
+    assert len(to_admin) == 1 and "Kumpel" in to_admin[0] and "🟢 Valheim" in to_admin[0] and "KeyError" in to_admin[0]
+
+    ui.sent.clear()  # admin sam: jedna wiadomosc ze szczegolami, bez kopii
+    ui.c.handle_updates([{"update_id": 6, "callback_query": press(ui, "srv:Valheim01", admin, shown)}], "")
+    assert len(ui.sent) == 1 and ui.sent[0][0] == 1 and "KeyError" in ui.sent[0][1]
+
+    def leaks(*a, **k):
+        raise RuntimeError("POST https://api.telegram.org/bot123:SECRET/sendMessage")
+
+    monkeypatch.setattr(bot, "TOKEN", "123:SECRET")
+    monkeypatch.setattr(ui.c, "server_view", leaks)
+    ui.sent.clear()
+    ui.c.handle_updates([{"update_id": 7, "callback_query": press(ui, "srv:Valheim01", friend, shown)}], "")
+    assert ui.sent and not any("SECRET" in m for _, m, _ in ui.sent)  # token nigdy w wiadomosci
+
+
+def test_amp_errors_in_plain_words(env, ui, monkeypatch):
+    import errno
+    import socket
+    import urllib.error
+
+    def down(path, payload, timeout=30):
+        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+
+    monkeypatch.setattr(ui.amp, "_post", down)
+    text, _ = ui.click("srv")
+    assert "nic nie odpowiada" in text and "Errno" not in text and "urlopen" not in text
+
+    url = "https://api.telegram.org/bot123:SECRET/sendDocument"
+    cases = [
+        (TimeoutError("timed out"), "nie odpowiedział na czas"),
+        (urllib.error.URLError(TimeoutError()), "nie odpowiedział na czas"),
+        (urllib.error.URLError(socket.gaierror(8, "nodename nor servname")), "nie znam adresu"),
+        (urllib.error.URLError(OSError(65, "No route to host")), "brak połączenia"),
+        (urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None), "błąd po stronie serwera (503)"),
+        (urllib.error.HTTPError(url, 401, "Unauthorized", {}, None), "odmowa dostępu (401)"),
+        (urllib.error.HTTPError(url, 429, "Too Many Requests", {}, None), "za dużo zapytań"),
+        (ValueError("Expecting value: line 1 column 1"), "dziwną odpowiedź"),
+        (OSError(errno.ENOSPC, "No space left on device"), "brak miejsca na dysku"),
+        (bot.AmpError("Instance is not running"), "Instance is not running"),  # powod od AMP bez zmian
+        (KeyError("x"), "nieoczekiwany błąd (KeyError)"),
+    ]
+    for error, expected in cases:
+        said = bot.explain(error, "pl")
+        assert expected in said and "SECRET" not in said and "Errno" not in said, (error, said)
+    assert "didn't answer in time" in bot.explain(TimeoutError(), "en")
