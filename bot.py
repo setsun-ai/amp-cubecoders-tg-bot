@@ -1071,11 +1071,58 @@ def read(path, default=None):
 
 # ---------- Telegram ----------
 
+TG_ROW_CHARS = 42  # rzad przyciskow na telefonie (~390 pt) miesci tyle znakow; n przyciskow dzieli go po rowno
+
+
+def label_width(text):
+    """Szerokosc tekstu przycisku w znakach: emoji i symbole zajmuja dwa, selektor wariantu i ZWJ zero."""
+    return sum(0 if ch in "\ufe0f\u200d" else 2 if ord(ch) >= 0x2300 else 1 for ch in text)
+
+
+def fits(text, n):
+    return label_width(text) <= TG_ROW_CHARS // n - 2
+
+
+def shorten(text, n=1):
+    """Za dlugi tekst: wycinamy srodek, poczatek (stan, nazwa) i koniec (np. liczba graczy) zostaja."""
+    if fits(text, n):
+        return text
+    left = right = len(text) // 2
+    while left > 0 or right < len(text):
+        if left > len(text) - right:
+            left -= 1
+        else:
+            right += 1
+        short = text[:left].rstrip() + "…" + text[right:].lstrip()
+        if fits(short, n):
+            return short
+    return "…"
+
+
+def fit_keyboard(markup):
+    """
+    Przyciski tak, zeby mieszczly sie na telefonie w kazdym jezyku: rzad, ktory sie nie miesci, dzielimy na kilka
+    (kolejnosc zostaje), a za dlugi pojedynczy tekst skracamy w srodku. Dzieje sie tuz przed wyslaniem (send, edit).
+    """
+    if not markup or "inline_keyboard" not in markup:
+        return markup
+    rows = []
+    for row in markup["inline_keyboard"]:
+        line = []
+        for b in row:
+            if line and not all(fits(x["text"], len(line) + 1) for x in line + [b]):
+                rows.append(line)
+                line = []
+            line.append(b)
+        rows.append(line)
+    return {**markup, "inline_keyboard": [[{**b, "text": shorten(b["text"], len(r))} for b in r] for r in rows]}
+
+
 def edit(chat_id, message_id, text, markup=None):
     params = {"chat_id": chat_id, "message_id": message_id, "text": text, "parse_mode": "HTML",
               "disable_web_page_preview": "true"}
     if markup:
-        params["reply_markup"] = json.dumps(markup)
+        params["reply_markup"] = json.dumps(fit_keyboard(markup))
     try:
         tg_api("editMessageText", params)
     except Exception as e:  # np. "message is not modified" po odswiezeniu bez zmian
@@ -1117,7 +1164,7 @@ def send(text, chat_id=None, markup=None):
     params = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
               "disable_web_page_preview": "true"}
     if markup:
-        params["reply_markup"] = json.dumps(markup)
+        params["reply_markup"] = json.dumps(fit_keyboard(markup))
     token = BOT["token"] or TOKEN  # bot, ktory wlasnie odpowiada (do admina: glowny, patrz wyzej)
     for attempt in range(3):
         try:

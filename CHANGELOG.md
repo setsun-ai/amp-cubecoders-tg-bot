@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.6.0 (unreleased)
+
+- **Buttons fit on a phone in every language.** Just before a message goes to Telegram, a row of buttons that doesn't fit is split into more rows (same order, nothing disappears) - e.g. the friends' "🔕 When the server is up" / "When someone joins" in Russian, or "🖼 Server icon" next to Mods and Backups. A single button that is still too long (a long server or mod name) is shortened in the middle, so the status at the start and the player count at the end stay visible. One rule for every menu, including future ones: `TG_ROW_CHARS` (42 characters per row, emoji count as two).
+
 ## 2.5.1 (2026-11)
 
 - **📦 Download the world in the background**: packing and uploading no longer stop the bot - player and crash alerts, commands and the healthcheck keep working while a big world uploads. Minecraft gets `save-on` as soon as the zip is packed, not after the upload. The "Packing..." message turns into the result. One world at a time: a second click says it is already packing, and `/update` waits for the download before restarting.

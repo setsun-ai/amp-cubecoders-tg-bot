@@ -7,6 +7,7 @@ import pytest
 import bot
 
 REAL_SEND = bot.send  # przed podmiana w fixture env
+REAL_EDIT = bot.edit
 
 VALHEIM_KVP = [
     "App.DisplayName=Valheim",
@@ -2007,3 +2008,55 @@ def test_world_download_refuses_too_big_or_no_disk(env, ui, mod_instances, monke
     monkeypatch.setattr(bot.shutil, "disk_usage", lambda p: bot.shutil._ntuple_diskusage(10**9, 10**9, 100))
     text, _ = ui.click("wd:Valheim01")
     assert "miejsca" in text and docs == [] and not (root / "amp-tg-world-stale").exists()
+
+
+# ---------- przyciski mieszcza sie na telefonie ----------
+
+def test_buttons_fit_on_a_phone_in_every_language(env, ui, mod_instances, monkeypatch):
+    """To, co naprawde idzie do Telegrama: kazdy przycisk miesci sie w kafelku, zaden nie znika."""
+    root, _ = mod_instances
+    make_valheim_worlds(root)
+    mc = root / "Mc01" / "Minecraft"
+    (mc / "world" / "region").mkdir(parents=True)
+    (mc / "whitelist.json").write_text("[]")
+    env.write("Mc01", "[12:00:00] [Server thread/INFO]: Steve joined the game")
+    ui.amp.insts["Mc01"]["friendly"] = "Minecraft – serwer całej ekipy na weekend (modpack 1.20.1)"
+    bot.friend_set(env.db, 42, "Kumpel z bardzo długim imieniem i nazwiskiem", ["Mc01", "Valheim01"])
+    sent = []
+    monkeypatch.setattr(bot, "send", REAL_SEND)
+    monkeypatch.setattr(bot, "edit", REAL_EDIT)
+    monkeypatch.setattr(bot, "TOKEN", "123:x")
+    monkeypatch.setattr(bot, "tg_api", lambda method, params=None, **k: sent.append((method, params or {})) or {})
+    admin, friend = {"id": 1, "first_name": "Admin"}, {"id": 42, "first_name": "Kumpel"}
+
+    def keyboards(data, user, lang):
+        monkeypatch.setattr(bot, "lang_for", lambda chat=None: lang)
+        sent.clear()
+        ui.c.handle_callback({"id": "q", "from": user, "data": data,
+                              "message": {"chat": {"id": user["id"]}, "message_id": 7}})
+        return [json.loads(p["reply_markup"])["inline_keyboard"] for _, p in sent if "reply_markup" in p]
+
+    checked = 0
+    for lang in bot.LANG_ORDER:
+        for user, calls in ((admin, ["srv", "srv:Mc01", "srv:Valheim01", "md:Mc01", "wl:Mc01", "do:restart:Mc01",
+                                     "frl"]),
+                            (friend, ["srv", "srv:Mc01", "srv:Valheim01", "wl:Mc01"])):
+            for data in calls:
+                for rows in keyboards(data, user, lang):
+                    for row in rows:
+                        for b in row:
+                            checked += 1
+                            assert bot.label_width(b["text"]) <= bot.TG_ROW_CHARS // len(row) - 2, (lang, data, b)
+    assert checked > 300
+
+    rows = keyboards("srv:Mc01", friend, "ru")[0]
+    subs = [r for r in rows if any(b["callback_data"].startswith("sub:") for b in r)]
+    assert len(subs) == 2 and all(len(r) == 1 for r in subs)  # nie mieszcza sie po dwa: kazdy w swoim rzedzie
+    assert all(len(r) < 3 for r in keyboards("srv:Mc01", admin, "pl")[0] if any("🖼" in b["text"] for b in r))
+    listed = keyboards("srv", admin, "pl")[0][0][0]["text"]  # za dlugi: srodek wyciety, stan i liczba graczy zostaja
+    assert listed == "🟢 Minecraft – serwe…modpack 1.20.1) 👥1"  # emoji zajmuje dwa znaki
+
+    sent.clear()  # nowa wiadomosc (send), nie tylko edycja
+    ui.c.handle({"chat": {"id": 1}, "from": admin, "text": "/servers", "date": 1000})
+    rows = [json.loads(p["reply_markup"])["inline_keyboard"] for _, p in sent if "reply_markup" in p][0]
+    assert rows[0][0]["text"] == listed
