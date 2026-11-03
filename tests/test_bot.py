@@ -1,5 +1,6 @@
 """Testy parserow logow i komend na zmyslonych danych (bez Telegrama i internetu)."""
 import json
+import threading
 
 import pytest
 
@@ -1888,37 +1889,87 @@ def test_send_document_multipart(tmp_path, monkeypatch):
     assert int(req.headers["Content-length"]) == len(body) and max(map(len, chunks)) <= 1024 * 1024
 
 
+def finish_world(ui):
+    """Watek z pobieraniem konczy prace, a glowna petla odbiera wynik (jak w run())."""
+    ui.c.world.thread.join(10)
+    ui.c.world_poll()
+    assert ui.c.world is None
+
+
+def fake_documents(monkeypatch, gate=None):
+    """Wyslane pliki (z wycinkiem pliku); gate: upload czeka, az test pozwoli."""
+    import zipfile
+    docs, entered = [], threading.Event()
+
+    def fake_document(chat, path, filename, caption="", token=None, offset=0, length=None):
+        entered.set()
+        if gate:
+            assert gate.wait(10)
+        data = open(path, "rb").read()[offset:None if length is None else offset + length]
+        names = zipfile.ZipFile(path).namelist() if filename.endswith(".zip") else []  # czesci to nie caly zip
+        docs.append({"chat": chat, "file": filename, "caption": caption, "names": names, "data": data,
+                     "token": token})
+
+    monkeypatch.setattr(bot, "send_document", fake_document)
+    return docs, entered
+
+
 def test_world_download_from_telegram(env, ui, mod_instances, monkeypatch):
+    import io
     import zipfile
     root, _ = mod_instances
     make_valheim_worlds(root)
-    docs = []
-
-    def fake_document(chat, path, filename, caption=""):
-        data = open(path, "rb").read()
-        names = zipfile.ZipFile(path).namelist() if path.endswith(".zip") else []  # czesci .001 to nie caly zip
-        docs.append({"chat": chat, "file": filename, "caption": caption, "names": names, "size": len(data)})
-
-    monkeypatch.setattr(bot, "send_document", fake_document)
+    docs, _ = fake_documents(monkeypatch)
     bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
     friend = {"id": 42, "first_name": "Kumpel"}
     text, markup = ui.click("srv:Valheim01", friend)
     assert "wd:Valheim01" in str(markup)  # znajomy na swoim serwerze: tak
-    text, _ = ui.click("wd:Valheim01", friend)
+    with bot.via("777:FRIENDS"):  # klikniete w bocie znajomych - plik przychodzi od niego
+        ui.click("wd:Valheim01", friend)
+    assert any(chat == 42 and "Pakuję" in msg for chat, msg, _ in ui.sent)
+    finish_world(ui)
     assert len(docs) == 1 and docs[0]["chat"] == 42 and "Midgard/_main.7.db2" in docs[0]["names"]
+    assert docs[0]["token"] == "777:FRIENDS"
     assert docs[0]["file"].startswith("Valheim01-Midgard-") and "Midgard" in docs[0]["caption"]
-    assert "✅ Wysłane" in text
+    chat, mid, text, _ = ui.edits[-1]
+    assert chat == 42 and mid != 7 and "✅ Wysłane" in text  # komunikat "Pakuję" zamienia sie w wynik
     assert any(chat is None and "📦 Midgard" in msg for chat, msg, _ in ui.sent)  # admin wie, kto pobral
     n = len(docs)
     ui.click("wd:Mc01", friend)  # cudzy serwer
-    assert len(docs) == n
+    assert ui.c.world is None and len(docs) == n
 
     monkeypatch.setattr(bot, "TG_FILE_LIMIT", 100)
     monkeypatch.setattr(bot, "TG_PART", 60)
     docs.clear()
+    monkeypatch.setattr(bot, "TOKEN", "123:MAIN")
+    ui.click("wd:Valheim01")  # glowny bot: token wprost, nie BOT["token"], ktory petla przelacza w trakcie
+    finish_world(ui)
+    assert {d["token"] for d in docs} == {"123:MAIN"}
+    assert len(docs) >= 2 and docs[0]["file"].endswith(".zip.001") and docs[1]["file"].endswith(".zip.002")
+    assert "częściach" in docs[0]["caption"] and docs[1]["caption"] == ""
+    whole = b"".join(d["data"] for d in docs)  # czesci zlozone razem to caly zip
+    assert all(len(d["data"]) == 60 for d in docs[:-1])
+    assert "Midgard/_main.7.db2" in zipfile.ZipFile(io.BytesIO(whole)).namelist()
+
+
+def test_world_download_one_at_a_time_and_update_waits(env, ui, mod_instances, monkeypatch):
+    root, _ = mod_instances
+    make_valheim_worlds(root)
+    gate = threading.Event()
+    docs, entered = fake_documents(monkeypatch, gate)
     ui.click("wd:Valheim01")
-    assert len(docs) >= 2 and docs[0]["file"].endswith(".zip.001") and docs[1]["caption"] == ""
-    assert sum(d["size"] for d in docs) > 100 and any("częściach" in msg for _, msg, _ in ui.sent)
+    assert entered.wait(10)  # wysylka trwa
+    text, _ = ui.click("wd:Valheim01")
+    assert "Już pakuję" in text  # drugie klikniecie nic nie zaczyna
+    monkeypatch.setattr(bot, "TOKEN", "123:x")
+    ui.c.restart = True  # /update w trakcie: bot czeka z restartem na koniec wysylki
+    ui.c.world_poll()
+    ui.c.poll(0)
+    gate.set()
+    finish_world(ui)
+    assert len(docs) == 1
+    with pytest.raises(SystemExit):
+        ui.c.poll(0)
 
 
 def test_world_download_minecraft_pauses_saving(env, ui, mod_instances, monkeypatch):
@@ -1926,11 +1977,18 @@ def test_world_download_minecraft_pauses_saving(env, ui, mod_instances, monkeypa
     mc = root / "Mc01" / "Minecraft"
     (mc / "world" / "region").mkdir(parents=True)
     (mc / "world" / "level.dat").write_bytes(b"level")
-    monkeypatch.setattr(bot, "send_document", lambda *a, **k: None)
+    gate = threading.Event()
+    _, entered = fake_documents(monkeypatch, gate)
     ui.click("wd:Mc01")
-    assert ui.say() == ["save-off", "save-all flush", "save-on"]  # spojny zapis bez zatrzymywania serwera
+    assert entered.wait(10)  # spakowane, wysylka trwa
+    ui.c.world_poll()
+    assert ui.say() == ["save-off", "save-all flush", "save-on"]  # zapis wraca od razu po spakowaniu
+    gate.set()
+    finish_world(ui)
+    assert ui.say() == ["save-off", "save-all flush", "save-on"]
     ui.amp.insts["Mc01"]["state"] = 0
     ui.click("wd:Mc01")
+    finish_world(ui)
     assert ui.say() == ["save-off", "save-all flush", "save-on"]  # serwer zatrzymany - pliki sa juz zapisane
 
 
@@ -1944,6 +2002,8 @@ def test_world_download_refuses_too_big_or_no_disk(env, ui, mod_instances, monke
     assert "za duży" in text and docs == []
 
     monkeypatch.setattr(bot, "WORLD_MAX_MB", 0)  # 0 = bez limitu
+    monkeypatch.setattr(bot.tempfile, "tempdir", str(root))
+    (root / "amp-tg-world-stale").mkdir()  # zip po restarcie w trakcie pakowania - sprzatany przed liczeniem miejsca
     monkeypatch.setattr(bot.shutil, "disk_usage", lambda p: bot.shutil._ntuple_diskusage(10**9, 10**9, 100))
     text, _ = ui.click("wd:Valheim01")
-    assert "miejsca" in text and docs == []
+    assert "miejsca" in text and docs == [] and not (root / "amp-tg-world-stale").exists()

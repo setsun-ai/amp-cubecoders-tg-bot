@@ -31,6 +31,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -775,6 +776,10 @@ STRINGS = {
                    "⚠️ The game kept saving the world while I packed it – try again in a minute.",
                    "⚠️ Игра всё время сохраняла мир, пока я его упаковывал – попробуй через минуту.",
                    "⚠️ Гра весь час зберігала світ, поки я його пакував – спробуй за хвилину."),
+    "world_running": ("⏳ Już pakuję świat {world} – poczekaj, aż przyjdzie.",
+                      "⏳ Already packing the world {world} – wait until it arrives.",
+                      "⏳ Уже упаковываю мир {world} – дождись, пока он придёт.",
+                      "⏳ Уже пакую світ {world} – зачекай, поки він прийде."),
     "world_too_big": ("⚠️ Świat {world} ma {size} MB – za duży na Telegram (limit {max} MB, WORLD_MAX_MB).",
                       "⚠️ The world {world} has {size} MB – too big to send on Telegram (limit {max} MB, WORLD_MAX_MB).",
                       "⚠️ Мир {world} весит {size} МБ – слишком большой для Telegram (лимит {max} МБ, WORLD_MAX_MB).",
@@ -3598,18 +3603,6 @@ def pack_world(paths, dest, tries=3):
     return None
 
 
-def split_file(path, size=None):
-    """Plik -> czesci path.001, path.002, ... (7-Zip otwiera je od pierwszej)."""
-    size, parts = size or TG_PART, []
-    with open(path, "rb") as f:
-        while chunk := f.read(size):
-            part = f"{path}.{len(parts) + 1:03d}"
-            with open(part, "wb") as out:
-                out.write(chunk)
-            parts.append(part)
-    return parts
-
-
 def send_document(chat_id, path, filename, caption="", token=None, offset=0, length=None):
     """
     Plik (albo jego wycinek od `offset`, `length` bajtow) na czat: multipart wysylany kawalkami, bez calego pliku
@@ -3640,6 +3633,51 @@ def send_document(chat_id, path, filename, caption="", token=None, offset=0, len
                                                        "Content-Length": str(len(head) + int(size) + len(tail))})
     with urllib.request.urlopen(req, timeout=600) as r:
         return json.loads(r.read())
+
+
+class WorldJob:
+    """
+    Pakowanie i wysylka swiata w watku, zeby glowna petla (alerty, komendy) nie stala. Watek nie dotyka bazy, AMP
+    ani send/edit (BOT["token"] zmienia sie w petli): ma wszystko podane wprost. Pisze tylko result, potem done;
+    glowna petla czyta po done (world_poll).
+    """
+
+    def __init__(self, name, world, paths, chat, user, lang, token, status_id, minecraft):
+        self.name, self.world, self.paths, self.chat, self.user = name, world, paths, chat, user
+        self.lang, self.token, self.status_id, self.minecraft = lang, token, status_id, minecraft
+        self.friendly = FRIENDLY.get(name, name)
+        self.filename = re.sub(r"[^\w.-]", "_", f"{self.friendly}-{world}-{datetime.now():%Y%m%d-%H%M}.zip")
+        self.tmp = tempfile.mkdtemp(prefix="amp-tg-world-")
+        self.packed, self.done = threading.Event(), threading.Event()
+        self.result = None  # (klucz tekstu, parametry)
+        self.thread = threading.Thread(target=self.run, name=f"world-{name}", daemon=True)
+
+    def run(self):
+        try:
+            zpath = os.path.join(self.tmp, self.filename)
+            try:
+                saved = pack_world(self.paths, zpath)
+            finally:
+                self.packed.set()
+            if saved is None:
+                self.result = ("world_busy", {})
+                return
+            size = os.path.getsize(zpath)
+            caption = t("world_caption", self.lang, inst=esc(self.friendly), world=esc(self.world), when=ts(saved))
+            offsets = range(0, size, TG_PART) if size > TG_FILE_LIMIT else [0]
+            if len(offsets) > 1:
+                caption += "\n\n" + t("world_parts", self.lang, size=f"{size / 1e6:.0f}", n=len(offsets),
+                                       file=esc(self.filename))
+            for i, offset in enumerate(offsets):
+                part = f"{self.filename}.{i + 1:03d}" if len(offsets) > 1 else self.filename
+                send_document(self.chat, zpath, part, caption if i == 0 else "", token=self.token, offset=offset,
+                              length=TG_PART if len(offsets) > 1 else None)
+            self.result = ("world_sent", {"file": esc(self.filename), "size": f"{size / 1e6:.1f}"})
+        except Exception as e:  # bez tresci bledu z URL-em (token)
+            self.result = ("mod_error", {"err": esc(getattr(e, "code", None) or type(e).__name__)})
+        finally:
+            shutil.rmtree(self.tmp, ignore_errors=True)
+            self.done.set()
 
 
 def icon_path(name):
@@ -4041,6 +4079,7 @@ class Commands:
         self.offsets = {}  # token bota ("" = glowny) -> offset getUpdates
         self.friend_bot = False  # czy wlasnie obslugujemy bota znajomych
         self.restart = False
+        self.world = None  # WorldJob w toku
         self.amp = Amp()
         self.awaiting = {}  # chat -> {"kind": "console"/"password", ...}: nastepna wiadomosc to dane
         self.cache = {}  # chat -> listy (gracze, ustawienia), do ktorych odwoluja sie przyciski po numerze
@@ -4069,7 +4108,7 @@ class Commands:
                 self.handle_updates(res.get("result", []), token)
             finally:
                 self.friend_bot = False
-        if self.restart:
+        if self.restart and not self.world:  # trwajace pobieranie swiata konczy sie przed restartem
             # potwierdzamy odebrane wiadomosci, zeby po restarcie /update nie wykonal sie drugi raz
             try:
                 tg_api("getUpdates", {"offset": self.offsets.get(""), "timeout": 0}, token=TOKEN)
@@ -5185,7 +5224,12 @@ class Commands:
     # ---------- swiat jako zip (admin i znajomi na swoich serwerach) ----------
 
     def world_download(self, name, user, chat, lang):
-        """Zip biezacego swiata na ten czat; Minecraft: save-off + save-all przed pakowaniem, save-on po."""
+        """
+        Zip biezacego swiata na ten czat, w tle (WorldJob), jeden naraz. Minecraft: save-off + save-all przed
+        pakowaniem, save-on zaraz po spakowaniu (world_poll).
+        """
+        if self.world:
+            return self.server_view(name, lang, note=t("world_running", lang, world=esc(self.world.world)))
         src = world_source(name)
         if not src:
             return self.server_view(name, lang, note=t("world_none", lang))
@@ -5195,9 +5239,11 @@ class Commands:
         if WORLD_MAX_MB and raw > WORLD_MAX_MB * 1e6:
             return self.server_view(name, lang, note=t("world_too_big", lang, world=esc(world), size=mb,
                                                        max=f"{WORLD_MAX_MB:g}"))
+        for old in glob.glob(os.path.join(tempfile.gettempdir(), "amp-tg-world-*")):  # po restarcie w trakcie
+            shutil.rmtree(old, ignore_errors=True)
         if shutil.disk_usage(tempfile.gettempdir()).free < raw + 100e6:  # zip nie jest wiekszy od plikow
             return self.server_view(name, lang, note=t("world_no_space", lang, world=esc(world), size=mb))
-        send(t("world_working", lang, world=esc(world)), chat)
+        status = send(t("world_working", lang, world=esc(world)), chat)
         minecraft = False
         if os.path.isdir(os.path.join(INSTANCES_DIR, name, "Minecraft")):
             try:
@@ -5208,37 +5254,32 @@ class Commands:
                     self.amp.console(name, "save-all flush")
             except Exception as e:
                 log(f"save-all {name}: {e}")
-        friendly = FRIENDLY.get(name, name)
-        filename = re.sub(r"[^\w.-]", "_", f"{friendly}-{world}-{datetime.now():%Y%m%d-%H%M}.zip")
-        tmp = tempfile.mkdtemp(prefix="amp-tg-world-")
-        try:
-            zpath = os.path.join(tmp, filename)
+        self.world = WorldJob(name, world, paths, chat, user, lang, BOT["token"] or TOKEN, status, minecraft)
+        self.world.thread.start()
+        return self.server_view(name, lang)
+
+    def world_poll(self):
+        """Glowna petla: save-on po spakowaniu, a po wysylce wynik w miejsce "Pakuje..." i slad dla admina."""
+        job = self.world
+        if not job:
+            return
+        if job.minecraft and job.packed.is_set():
+            job.minecraft = False
             try:
-                saved = pack_world(paths, zpath)
-            finally:
-                if minecraft:
-                    try:
-                        self.amp.console(name, "save-on")
-                    except Exception as e:
-                        log(f"save-on {name}: {e}")
-            if saved is None:
-                return self.server_view(name, lang, note=t("world_busy", lang))
-            size = os.path.getsize(zpath)
-            caption = t("world_caption", lang, inst=esc(friendly), world=esc(world), when=ts(saved))
-            if size <= TG_FILE_LIMIT:
-                send_document(chat, zpath, filename, caption)
+                self.amp.console(job.name, "save-on")
+            except Exception as e:
+                log(f"save-on {job.name}: {e}")
+        if not job.done.is_set():
+            return
+        self.world = None
+        key, params = job.result
+        with via(job.token):
+            if job.status_id:
+                edit(job.chat, job.status_id, t(key, job.lang, **params))
             else:
-                parts = split_file(zpath)
-                send(t("world_parts", lang, size=f"{size / 1e6:.0f}", n=len(parts), file=esc(filename)), chat)
-                for i, part in enumerate(parts):
-                    send_document(chat, part, os.path.basename(part), caption if i == 0 else "")
-        except Exception as e:  # bez tresci bledu z URL-em (token)
-            return self.server_view(name, lang, note=t("mod_error", lang, err=esc(getattr(e, "code", None)
-                                                                                    or type(e).__name__)))
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        self.audit(user, chat, f"📦 {world}", name)
-        return self.server_view(name, lang, note=t("world_sent", lang, file=esc(filename), size=f"{size / 1e6:.1f}"))
+                send(t(key, job.lang, **params), job.chat)
+        if key == "world_sent":
+            self.audit(job.user, job.chat, f"📦 {job.world}", job.name)
 
     # ---------- adres z zewnatrz (tunel playit) - tylko admin ----------
 
@@ -5491,6 +5532,10 @@ def run():
                 watcher.poll()
             except Exception as e:
                 log(f"{label}: {e}")
+        try:
+            commands.world_poll()
+        except Exception as e:
+            log(f"Pobieranie swiata: {e}")
         if FRIENDS_TOKEN:  # dwa boty na zmiane, kazdy krotko
             commands.poll(1)
             commands.poll(1, FRIENDS_TOKEN)
