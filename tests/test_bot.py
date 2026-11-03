@@ -580,7 +580,7 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
     text, _ = click("frs:42", admin)
     assert bot.friend_get(env.db, 42)["instances"] == ["Valheim01"] and "Valheim" in text
     assert any(chat == 42 and "/servers" in msg for chat, msg, _ in sent_to)  # znajomy dostal wiadomosc...
-    assert (42, bot.FRIEND_COMMANDS) in menus and bot.lang_for(42) == "uk"  # ...i swoje menu, po ukrainsku
+    assert (42, bot.FRIEND_MENU_COMMANDS) in menus and bot.lang_for(42) == "uk"  # ...i swoje menu, po ukrainsku
 
     sent_to.clear()
     c.handle({"chat": {"id": 42}, "from": friend, "text": "/servers"})
@@ -591,7 +591,7 @@ def test_friend_gets_only_assigned_servers(env, monkeypatch):
     c.handle({"chat": {"id": 42}, "from": friend, "text": "/history"})
     assert "Viking" in sent_to[-1][1] and "Steve" not in sent_to[-1][1]  # tylko jego serwery
     c.handle({"chat": {"id": 42}, "from": friend, "text": "/player Steve"})
-    assert "☰" in sent_to[-1][1] and "Steve" not in sent_to[-1][1]  # komendy admina - nie dla znajomego
+    assert "h:servers" in str(sent_to[-1][2]) and "Steve" not in sent_to[-1][1]  # komenda admina: znajomy dostaje menu
 
     text, markup = click("srv:Valheim01", friend)
     assert "pw:Valheim01" not in str(markup)  # bez hasel
@@ -1156,7 +1156,7 @@ def test_friend_settings_and_console_injection(env, monkeypatch):
 
 
 
-def test_friends_bot_start_is_language_then_menu_hint(env, monkeypatch):
+def test_friends_bot_start_is_language_then_menu(env, monkeypatch):
     sent_to, menus = [], []
     monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent_to.append((chat_id, text, markup)))
     monkeypatch.setattr(bot, "edit", lambda *a, **k: None)
@@ -1172,9 +1172,8 @@ def test_friends_bot_start_is_language_then_menu_hint(env, monkeypatch):
     assert "Choose a language" in sent_to[-1][1] and len(sent_to[-1][2]["inline_keyboard"]) == 2  # 4 przyciski
     c.handle_callback({"id": "q", "from": friend, "data": "lang:en", "message": {"chat": {"id": 42},
                                                                                "message_id": 3}})
-    assert "☰ Menu" in sent_to[-1][1] and "/servers" not in sent_to[-1][1]  # bez listy komend
-    assert menus[-1] == (42, bot.FRIEND_COMMANDS) and [x for x, _ in bot.FRIEND_COMMANDS] == [
-        "servers", "online", "history", "week"]
+    assert "/servers" not in sent_to[-1][1] and "🎮 Servers" in str(sent_to[-1][2])  # od razu kafelki, po angielsku
+    assert menus[-1] == (42, bot.FRIEND_MENU_COMMANDS) and [x for x, _ in bot.FRIEND_MENU_COMMANDS] == ["menu"]
 
 
 def test_server_icon(env, mod_instances, monkeypatch):
@@ -2038,9 +2037,9 @@ def test_buttons_fit_on_a_phone_in_every_language(env, ui, mod_instances, monkey
 
     checked = 0
     for lang in bot.LANG_ORDER:
-        for user, calls in ((admin, ["srv", "srv:Mc01", "srv:Valheim01", "md:Mc01", "wl:Mc01", "do:restart:Mc01",
-                                     "frl"]),
-                            (friend, ["srv", "srv:Mc01", "srv:Valheim01", "wl:Mc01"])):
+        for user, calls in ((admin, ["h", "hg:bot", "srv", "srv:Mc01", "srv:Valheim01", "md:Mc01", "wl:Mc01",
+                                     "do:restart:Mc01", "frl"]),
+                            (friend, ["h", "srv", "srv:Mc01", "srv:Valheim01", "wl:Mc01"])):
             for data in calls:
                 for rows in keyboards(data, user, lang):
                     for row in rows:
@@ -2149,3 +2148,57 @@ def test_amp_errors_in_plain_words(env, ui, monkeypatch):
         said = bot.explain(error, "pl")
         assert expected in said and "SECRET" not in said and "Errno" not in said, (error, said)
     assert "didn't answer in time" in bot.explain(TimeoutError(), "en")
+
+
+# ---------- menu z kafelkow (jak w moodle-sync) ----------
+
+def test_menu_of_tiles_for_admin_and_friend(env, ui, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bot, "tg_api", lambda method, params=None, **k: calls.append((method, params or {})) or {})
+    admin, friend = {"id": 1, "first_name": "Admin"}, {"id": 42, "first_name": "Kumpel"}
+
+    def typed(text, user=admin):
+        ui.c.handle({"chat": {"id": user["id"]}, "from": user, "text": text})
+        return ui.sent[-1]
+
+    def tiles(markup):
+        return [b["callback_data"] for row in markup["inline_keyboard"] for b in row]
+
+    chat, text, markup = typed("/menu")
+    assert chat == 1 and "/help" in text
+    assert tiles(markup) == ["h:servers", "h:online", "h:week", "h:history", "h:status", "h:dota", "h:updates",
+                             "h:friends", "h:lang", "hg:bot"]
+    assert tiles(typed("/start")[2]) == tiles(markup)  # /start tez otwiera menu
+
+    text, markup = ui.click("h:online")  # odpowiedz w miejscu menu, z powrotem
+    assert text.startswith(bot.t("online_title", "pl")) and tiles(markup) == ["h"]
+    text, markup = ui.click("h")
+    assert tiles(markup)[0] == "h:servers"
+    text, markup = ui.click("hg:bot")
+    assert tiles(markup) == ["h:version", "h:update", "h:rollback", "h:help", "h"]
+    text, markup = ui.click("h:servers")  # ekran z wlasnymi przyciskami, tez z ↩️ Menu
+    assert "srv:Mc01" in tiles(markup) and tiles(markup)[-1] == "h"
+    text, markup = ui.click("h:version")
+    assert "2." in text and tiles(markup) == ["h"]
+    n = len(ui.sent)
+    ui.click("h:help")  # akcja jak wpisana komenda: nowa wiadomosc
+    assert len(ui.sent) == n + 1 and "/history" in ui.sent[-1][1]
+
+    assert "👥" in typed("/online")[1] or bot.t("online_title", "pl") in ui.sent[-1][1]  # wpisane nadal dziala
+    bot.set_menu(1)  # pod "/" tylko menu i pomoc
+    assert [c["command"] for c in json.loads(calls[-1][1]["commands"])] == ["menu", "help"]
+
+    bot.friend_set(env.db, 42, "Kumpel", ["Valheim01"])
+    chat, text, markup = typed("/menu", friend)
+    assert chat == 42 and tiles(markup) == ["h:servers", "h:online", "h:history", "h:week"]
+    text, markup = ui.click("h:week", friend)
+    assert tiles(markup) == ["h"]
+    env.db.execute("INSERT INTO sessions(instance, game, username, joined, left) VALUES "
+                   "('Valheim01','Valheim','Viking',1,2), ('Mc01','Minecraft','Steve',3,4)")
+    text, _ = ui.click("h:history", friend)
+    assert "Viking" in text and "Steve" not in text  # tylko jego serwery, tak jak /history
+    calls.clear()
+    ui.c.handle_callback({"id": "q", "from": friend, "data": "h:status",
+                          "message": {"chat": {"id": 42}, "message_id": 7}})
+    assert "tylko admin" in calls[0][1]["text"]
+    assert tiles(typed("/cokolwiek", friend)[2])[0] == "h:servers"  # nieznana komenda: menu, nie lista

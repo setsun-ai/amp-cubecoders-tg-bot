@@ -370,6 +370,28 @@ STRINGS = {
     "c_rollback": ("Powrót do poprzedniej wersji", "Back to the previous version", "Вернуть предыдущую версию",
                    "Повернути попередню версію"),
     "c_help": ("Lista komend", "Command list", "Список команд", "Список команд"),
+    "c_menu": ("Menu z kafelkami", "Menu with tiles", "Меню с плитками", "Меню з плитками"),
+    # menu z kafelkow
+    "hub_title": ("🧩 <b>Menu</b>\nWybierz kafelek. Pełna lista komend: /help",
+                  "🧩 <b>Menu</b>\nPick a tile. All commands: /help",
+                  "🧩 <b>Меню</b>\nВыбери плитку. Все команды: /help",
+                  "🧩 <b>Меню</b>\nОбери плитку. Усі команди: /help"),
+    "hub_bot_title": ("🛠 <b>Bot</b>", "🛠 <b>Bot</b>", "🛠 <b>Бот</b>", "🛠 <b>Бот</b>"),
+    "btn_menu": ("↩️ Menu", "↩️ Menu", "↩️ Меню", "↩️ Меню"),
+    "tile_servers": ("🎮 Serwery", "🎮 Servers", "🎮 Серверы", "🎮 Сервери"),
+    "tile_online": ("👥 Online", "👥 Online", "👥 Онлайн", "👥 Онлайн"),
+    "tile_week": ("📊 Tydzień", "📊 Week", "📊 Неделя", "📊 Тиждень"),
+    "tile_history": ("📜 Historia", "📜 History", "📜 История", "📜 Історія"),
+    "tile_status": ("🖥 Status", "🖥 Status", "🖥 Статус", "🖥 Статус"),
+    "tile_dota": ("🎯 Dota", "🎯 Dota", "🎯 Дота", "🎯 Дота"),
+    "tile_updates": ("🔔 Aktualizacje", "🔔 Updates", "🔔 Обновления", "🔔 Оновлення"),
+    "tile_friends": ("👫 Znajomi", "👫 Friends", "👫 Друзья", "👫 Друзі"),
+    "tile_lang": ("🌐 Język", "🌐 Language", "🌐 Язык", "🌐 Мова"),
+    "tile_bot": ("🛠 Bot ▸", "🛠 Bot ▸", "🛠 Бот ▸", "🛠 Бот ▸"),
+    "tile_version": ("🤖 Wersja", "🤖 Version", "🤖 Версия", "🤖 Версія"),
+    "tile_update": ("⬆️ Aktualizuj", "⬆️ Update", "⬆️ Обновить", "⬆️ Оновити"),
+    "tile_rollback": ("⏪ Cofnij", "⏪ Roll back", "⏪ Откатить", "⏪ Відкотити"),
+    "tile_help": ("📖 Komendy", "📖 Commands", "📖 Команды", "📖 Команди"),
     "upd_checking_now": ("🔎 Sprawdzam aktualizacje…", "🔎 Checking for updates…", "🔎 Проверяю обновления…",
                          "🔎 Перевіряю оновлення…"),
     "c_updates": ("Aktualizacje systemu i AMP", "System and AMP updates", "Обновления системы и AMP",
@@ -423,10 +445,6 @@ STRINGS = {
     "act_start": ("▶️ Uruchom serwer", "▶️ Start server", "▶️ Запустить сервер", "▶️ Запустити сервер"),
     "act_stop": ("⏹ Zatrzymaj serwer", "⏹ Stop server", "⏹ Остановить сервер", "⏹ Зупинити сервер"),
     "btn_mods": ("🧩 Mody", "🧩 Mods", "🧩 Моды", "🧩 Моди"),
-    "fr_menu_hint": ("✅ Gotowe. Wszystkie komendy masz pod przyciskiem ☰ Menu obok pola wiadomości.",
-                     "✅ Done. All commands are under the ☰ Menu button next to the message field.",
-                     "✅ Готово. Все команды – под кнопкой ☰ Menu рядом с полем сообщения.",
-                     "✅ Готово. Усі команди – під кнопкою ☰ Menu поруч із полем повідомлення."),
     "btn_icon": ("🖼 Ikona serwera", "🖼 Server icon", "🖼 Иконка сервера", "🖼 Іконка сервера"),
     "icon_prompt": ("🖼 Wyślij obrazek na ikonę serwera (widać ją na liście serwerów w grze). Najlepiej PNG 64×64 "
                     "wysłany jako plik{resize}.",
@@ -4019,6 +4037,15 @@ COMMANDS = [("online", ""), ("servers", ""), ("friends", ""), ("updates", ""), (
             ("version", ""), ("update", ""), ("rollback", ""), ("help", "")]
 # znajomi: tylko przydzielone serwery
 FRIEND_COMMANDS = [("servers", ""), ("online", ""), ("history", " [N]"), ("week", "")]
+# pod "/" w Telegramie tylko menu (i pomoc) - reszta to kafelki; wpisane komendy dzialaja dalej, /help je wymienia
+MENU_COMMANDS = [("menu", ""), ("help", "")]
+FRIEND_MENU_COMMANDS = [("menu", "")]
+# menu z kafelkow: grupa -> rzedy kafelkow; kafelek, ktory sam jest grupa, otwiera podmenu. Rzedy tak, zeby sie
+# miescily w kazdym jezyku ("Aktualizacje"/"Обновления" nie wejda po trzy).
+HUB = {"": [["servers", "online", "week"], ["history", "status", "dota"], ["updates", "friends"], ["lang", "bot"]],
+       "bot": [["version", "update"], ["rollback", "help"]]}
+FRIEND_HUB = {"": [["servers", "online"], ["history", "week"]]}
+FRIEND_TILES = {name for rows in FRIEND_HUB.values() for row in rows for name in row}
 # przyciski edytora ustawien: st (grupy), stc (grupa, strona), sti (ustawienie), ste (strona listy wyboru),
 # stv (wybrana wartosc), stw (wpisz wartosc), sts (szukaj)
 SETTINGS_KINDS = ("st:", "stc:", "sti:", "ste:", "stv:", "stw:", "sts:")
@@ -4037,12 +4064,20 @@ FRIEND_SETTINGS_DENY = re.compile(
     r"version|server ?type|memory|\bram\b|backup|schedul|update|webhook|token|whitelist file", re.I)
 # stare polskie nazwy z 1.0.0 dalej dzialaja
 ALIASES = {"historia": "history", "gracz": "player", "tydzien": "week", "tydzień": "week", "wersja": "version",
-           "pomoc": "help", "start": "help", "jezyk": "lang", "język": "lang", "language": "lang",
+           "pomoc": "help", "jezyk": "lang", "język": "lang", "language": "lang",
            "znajomi": "friends", "odbanuj": "unban", "pardon": "unban"}
 # komendy sa tylko pod przyciskiem "Menu"; to chowa klawiature z przyciskami z wersji 1.0.0-1.1.0
 NO_KEYBOARD = {"remove_keyboard": True}
 LANG_BUTTONS = {"inline_keyboard": [[{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("pl", "en")],
                                     [{"text": LANGS[c], "callback_data": f"lang:{c}"} for c in ("ru", "uk")]]}
+
+
+def version_text(lang):
+    try:
+        latest = esc(latest_release())
+    except Exception as e:
+        latest = t("check_failed", lang, err=explain(e, lang))
+    return t("version", lang, v=VERSION, latest=latest)
 
 
 def help_text(lang, commands=None):
@@ -4054,7 +4089,7 @@ def help_text(lang, commands=None):
 def set_menu(chat_id, commands=None):
     """Menu komend (przycisk 'Menu' w Telegramie) na czacie admina albo znajomego, w jego jezyku."""
     lang = lang_for(chat_id)
-    commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in commands or COMMANDS])
+    commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in commands or MENU_COMMANDS])
     try:
         tg_api("setMyCommands", {"commands": commands, "scope": json.dumps({"type": "chat", "chat_id": chat_id})})
     except Exception as e:
@@ -4350,10 +4385,11 @@ class Commands:
                 send(weekly_summary(self.db, lang=lang, scope=self.scope), chat)
             elif cmd == "unban":
                 self.unban_command(chat, args, lang)
-            elif cmd in ("help", "lang") and self.friend_bot:  # /start: najpierw jezyk, komendy sa w menu
+            elif cmd in ("help", "lang", "start") and self.friend_bot:  # najpierw jezyk, potem menu
                 send(t("lang_first"), chat, markup=LANG_BUTTONS)
-            else:
-                send(t("fr_menu_hint", lang), chat, markup=NO_KEYBOARD)
+            else:  # /menu, /start i cokolwiek innego: kafelki
+                text, markup = self.hub_view(lang)
+                send(text, chat, markup=markup)
             return
         if cmd == "online":
             send(t("online_title", lang) + "\n" + cmd_online(self.instances, lang), chat)
@@ -4382,12 +4418,11 @@ class Commands:
             self.bridge_command(chat, args, lang)
         elif cmd == "lang":
             self.lang_command(chat, args, lang)
+        elif cmd in ("menu", "start"):
+            text, markup = self.hub_view(lang)
+            send(text, chat, markup=markup)
         elif cmd == "version":
-            try:
-                latest = esc(latest_release())
-            except Exception as e:
-                latest = t("check_failed", lang, err=explain(e, lang))
-            send(t("version", lang, v=VERSION, latest=latest), chat)
+            send(version_text(lang), chat)
         elif cmd == "update":
             self.update(chat, lang, force="force" in args)
         elif cmd == "rollback":
@@ -4520,6 +4555,9 @@ class Commands:
             return
         if refusal or chat is None:
             return
+        if data == "h" or data.startswith(("h:", "hg:")):
+            self.hub_callback(data, user, chat, cq["message"]["message_id"])
+            return
         if data.startswith("dr:") and self.scope is None:
             acc = data[3:]
             row = self.db.execute("SELECT name FROM dota WHERE account_id=?", (acc,)).fetchone()
@@ -4564,9 +4602,46 @@ class Commands:
                                           "wl", "wla", "wlr", "wlt", "wd") + tuple(k[:-1] for k in SETTINGS_KINDS)
 
     def friend_may(self, data):
-        if data.startswith("lang:") or data == "srv":
+        if data.startswith("lang:") or data in ("srv", "h"):
             return True
+        if data.startswith("h:"):
+            return data[2:] in FRIEND_TILES
         return self.friend_kind(data) and data.partition(":")[2].rsplit(":", 1)[-1] in self.scope
+
+    # ---------- menu z kafelkow ----------
+
+    def hub_view(self, lang, group=""):
+        """Kafelki (admin: HUB, znajomy: FRIEND_HUB); w podmenu na dole ↩️ Menu."""
+        hub = HUB if self.scope is None else FRIEND_HUB
+        group = group if group in hub else ""
+        rows = [[self.btn(f"tile_{name}", f"hg:{name}" if name in hub else f"h:{name}", lang) for name in row]
+                for row in hub[group]]
+        if group:
+            rows.append([self.btn("btn_menu", "h", lang)])
+        return t(f"hub_{group}_title" if group else "hub_title", lang), {"inline_keyboard": rows}
+
+    def hub_callback(self, data, user, chat, message_id):
+        """
+        Kafelek: odpowiedz zastepuje menu (z ↩️ Menu), ekrany z wlasnymi przyciskami otwieraja sie w nim, a akcje
+        dzialaja jak wpisana komenda (nowa wiadomosc pod menu).
+        """
+        lang = lang_for(chat)
+        kind, _, name = data.partition(":")
+        if data == "h" or kind == "hg":
+            edit(chat, message_id, *self.hub_view(lang, name))
+            return
+        answers = {"online": lambda: t("online_title", lang) + "\n" + cmd_online(self.instances, lang, self.scope),
+                   "history": lambda: cmd_history(self.db, [], lang, self.scope),
+                   "week": lambda: weekly_summary(self.db, lang=lang, scope=self.scope),
+                   "status": lambda: cmd_status(self.instances, lang),
+                   "version": lambda: version_text(lang)}
+        screens = {"servers": self.servers_view, "friends": self.friends_view}
+        if name in answers:
+            edit(chat, message_id, answers[name](), {"inline_keyboard": [[self.btn("btn_menu", "h", lang)]]})
+        elif name in screens:
+            edit(chat, message_id, *screens[name](lang))
+        else:  # updates, dota, lang, update, rollback, help
+            self.handle({"chat": {"id": chat}, "from": user, "text": f"/{name}"})
 
     # ---------- /friends ----------
 
@@ -4577,7 +4652,8 @@ class Commands:
         for key, value in self.db.execute("SELECT key, value FROM meta WHERE key LIKE 'who:%' ORDER BY key"):
             if f"fr:{key[4:]}" not in known:  # prosili o dostep, jeszcze go nie maja
                 rows.append([{"text": f"❓ {json.loads(value)['name']}"[:60], "callback_data": f"fr:{key[4:]}"}])
-        return (t("fr_title", lang) if rows else t("fr_none", lang)), ({"inline_keyboard": rows} if rows else None)
+        rows.append([self.btn("btn_menu", "h", lang)])
+        return (t("fr_title", lang) if len(rows) > 1 else t("fr_none", lang)), {"inline_keyboard": rows}
 
     def friend_name(self, uid):
         friend = friend_get(self.db, uid)
@@ -4631,7 +4707,7 @@ class Commands:
                 CHAT_LANGS[str(uid)] = norm_lang(who.get("lang")) or "en"
             with via(FRIENDS_TOKEN):  # znajomy pisze z botem znajomych (jesli jest)
                 send(t("fr_granted", lang_for(uid), list=esc(labels)), uid)
-                set_menu(uid, FRIEND_COMMANDS)
+                set_menu(uid, FRIEND_MENU_COMMANDS)
             self.cache.pop(("fr", uid), None)
             text, markup = self.friends_view(lang)
             return t("fr_saved", lang, who=esc(name), list=esc(labels)) + "\n\n" + text, markup
@@ -4663,12 +4739,13 @@ class Commands:
             insts = self.amp.instances()
         except Exception as e:
             return (t("amp_error", lang, err=explain(e, lang)),
-                    {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)]]})
+                    {"inline_keyboard": [[self.btn("btn_refresh", "srv", lang)], [self.btn("btn_menu", "h", lang)]]})
         if self.scope is not None:  # znajomy widzi tylko przydzielone instancje
             insts = [i for i in insts if i["name"] in self.scope]
         new = [self.btn("btn_new", "new", lang)] if self.scope is None else []  # nowa instancja: tylko admin
         if not insts:
-            return t("srv_none", lang), ({"inline_keyboard": [new]} if new else None)
+            menu = [self.btn("btn_menu", "h", lang)]
+            return t("srv_none", lang), {"inline_keyboard": ([new] if new else []) + [menu]}
         rows = []
         for i in insts:
             emoji, _ = amp_state(i, lang)
@@ -4676,6 +4753,7 @@ class Commands:
             rows.append([{"text": f"{emoji} {i['friendly']}" + (f" 👥{n}" if n else ""),
                           "callback_data": f"srv:{i['name']}"[:64]}])
         rows.append([self.btn("btn_refresh", "srv", lang)] + new)
+        rows.append([self.btn("btn_menu", "h", lang)])
         return t("srv_title", lang), {"inline_keyboard": rows}
 
     @staticmethod
@@ -5567,11 +5645,9 @@ class Commands:
         if announce:
             send(t("lang_set", lang, name=LANGS[lang]), chat)
         friend = self.scope is not None or self.friend_bot
-        if friend:  # znajomy: zamiast listy komend - gdzie je znalezc (sa w menu)
-            send(t("fr_menu_hint", lang), chat, markup=NO_KEYBOARD)
-        else:
-            send(help_text(lang), chat, markup=NO_KEYBOARD)
-        set_menu(chat, FRIEND_COMMANDS if friend else None)
+        text, markup = self.hub_view(lang)  # od razu menu z kafelkami
+        send(text, chat, markup=markup)
+        set_menu(chat, FRIEND_MENU_COMMANDS if friend else None)
 
     def update(self, chat, lang, force=False):
         send(t("upd_checking", lang), chat)
@@ -5660,7 +5736,7 @@ def run():
                             log(f"setMyCommands (znajomi): {getattr(e, 'code', type(e).__name__)}")
                 with via(FRIENDS_TOKEN):
                     for uid, _name, _insts in friends_all(db):
-                        set_menu(uid, FRIEND_COMMANDS)
+                        set_menu(uid, FRIEND_MENU_COMMANDS)
             startup = False
             last_scan = now
         for inst in instances.values():
