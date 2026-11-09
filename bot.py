@@ -33,13 +33,17 @@ import subprocess
 import sys
 import tempfile
 import threading
-import miniapp
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from datetime import datetime
+
+try:
+    import miniapp
+except ImportError:  # /update z 2.7.x instaluje sam bot.py: bot dziala bez panelu i dociaga pliki (heal_files)
+    miniapp = None
 
 VERSION = "2.8.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
@@ -371,6 +375,14 @@ STRINGS = {
     "c_rollback": ("Powrót do poprzedniej wersji", "Back to the previous version", "Вернуть предыдущую версию",
                    "Повернути попередню версію"),
     "c_help": ("Lista komend", "Command list", "Список команд", "Список команд"),
+    "miniapp_missing": ("⚠️ Brakuje plików panelu (Mini App) wersji {v} i nie udało się ich pobrać ({err}). "
+                        "Bot działa bez panelu. Spróbuj: /update force",
+                        "⚠️ The panel (Mini App) files of {v} are missing and couldn't be downloaded ({err}). "
+                        "The bot works without the panel. Try: /update force",
+                        "⚠️ Нет файлов панели (Mini App) версии {v}, скачать не удалось ({err}). "
+                        "Бот работает без панели. Попробуй: /update force",
+                        "⚠️ Немає файлів панелі (Mini App) версії {v}, завантажити не вдалося ({err}). "
+                        "Бот працює без панелі. Спробуй: /update force"),
     "c_menu": ("Menu z kafelkami", "Menu with tiles", "Меню с плитками", "Меню з плитками"),
     # menu z kafelkow
     "hub_title": ("🧩 <b>Menu</b>\nWybierz kafelek. Pełna lista komend: /help",
@@ -1606,7 +1618,8 @@ def open_db(readonly=False):
     # sesje niezamkniete przy poprzednim wylaczeniu bota
     db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
     db.commit()
-    miniapp.ensure_schema(db)
+    if miniapp:
+        miniapp.ensure_schema(db)
     return db
 
 
@@ -3937,7 +3950,8 @@ class DotaWatcher:
             try:
                 data = opendota("constants/heroes")
                 self.heroes = {str(k): v.get("localized_name", "?") for k, v in data.items()}
-                miniapp.store_heroes(self.db, data)
+                if miniapp:
+                    miniapp.store_heroes(self.db, data)
                 self.heroes_at = time.time()
             except Exception as e:
                 log(f"OpenDota heroes: {e}")
@@ -3964,7 +3978,8 @@ class DotaWatcher:
             except Exception as e:
                 log(f"OpenDota {account}: {e}")
                 continue
-            miniapp.store_recent_matches(self.db, account, matches)
+            if miniapp:
+                miniapp.store_recent_matches(self.db, account, matches)
             if matches and not self.heroes:
                 self.hero_names()
             self.db.execute("UPDATE dota SET matches_at=?, public=? WHERE account_id=?",
@@ -3977,7 +3992,7 @@ class DotaWatcher:
             rank = dota_rank({"rank_tier": row[0]}) if row and row[0] else ""
             heroes = self.hero_names()
             for m in new[-5:]:  # po dlugiej przerwie bota - tylko kilka ostatnich
-                if miniapp.dota_notifications_enabled(self.db):
+                if miniapp is None or miniapp.dota_notifications_enabled(self.db):
                     send(dota_match_text(name, m, heroes, rank))
             self.db.execute("UPDATE dota SET last_match=? WHERE account_id=?", (new[-1]["match_id"], account))
             self.db.commit()
@@ -4099,7 +4114,7 @@ def set_menu(chat_id, commands=None):
     commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in commands or MENU_COMMANDS])
     try:
         tg_api("setMyCommands", {"commands": commands, "scope": json.dumps({"type": "chat", "chat_id": chat_id})})
-        if miniapp.public_url():
+        if miniapp and miniapp.public_url():
             tg_api("setChatMenuButton", {"chat_id": chat_id, "menu_button": json.dumps({
                 "type": "web_app", "text": "📱 Panel", "web_app": {"url": miniapp.public_url()}})})
     except Exception as e:
@@ -4144,8 +4159,55 @@ def latest_release():
 
 
 def install_release(tag):
-    """All release files must pass --selftest together before replacing any files."""
-    return miniapp.install_release(tag, GITHUB_REPO, BOT_PATH)
+    """
+    Wszystkie pliki wydania przechodza --selftest razem, zanim ktorykolwiek zostanie podmieniony (miniapp.py).
+    Bot zainstalowany sam (z 2.7.x) najpierw pobiera miniapp.py tego wydania. Zwraca (ok, komunikat).
+    """
+    try:
+        return (miniapp or fetch_installer(tag)).install_release(tag, GITHUB_REPO, BOT_PATH)
+    except Exception as e:  # bez URL-a w komunikacie
+        return False, f"{type(e).__name__}: {getattr(e, 'code', '')}"
+
+
+def fetch_installer(tag):
+    """miniapp.py z wydania `tag` obok bota, zaladowany jako modul (instaluje potem wszystkie pliki)."""
+    import importlib.util
+    if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag):
+        raise ValueError("tag")
+    code = github_get(f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/miniapp.py", timeout=30)
+    path = os.path.join(os.path.dirname(BOT_PATH), "miniapp.py")
+    with open(path, "wb") as f:
+        f.write(code)
+    spec = importlib.util.spec_from_file_location("miniapp", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def legacy_rollback():
+    """Bez miniapp.py: kopia bot.py.bak, ktora zostawia aktualizacja z 2.7.x."""
+    bak = BOT_PATH + ".bak"
+    if not os.path.exists(bak):
+        return False, ""
+    os.replace(bak, BOT_PATH)
+    return True, ""
+
+
+def heal_files(db):
+    """
+    Start bez miniapp.py (po /update z 2.7.x): raz na wersje pobiera brakujace pliki i restartuje sie, zeby je
+    zaladowac. Gdy sie nie uda - bot dziala dalej bez panelu, admin dostaje wskazowke. Nigdy w kolko.
+    """
+    key = f"heal:{VERSION}"
+    if miniapp is not None or meta_get(db, key):
+        return
+    meta_set(db, key, int(time.time()))
+    ok, note = install_release(f"v{VERSION}")
+    if ok:
+        log(f"Pliki Mini App {VERSION} pobrane, restart")
+        sys.exit(0)
+    log(f"Pliki Mini App {VERSION}: {note}")
+    send(t("miniapp_missing", v=VERSION, err=esc(note)))
 
 
 def selftest():
@@ -4164,7 +4226,7 @@ def selftest():
         help_text(lang)
         help_text(lang, FRIEND_COMMANDS)
         fmt_duration(3700, lang)
-    for asset in ("index.html", "app.js", "style.css"):
+    for asset in ("index.html", "app.js", "style.css") if miniapp else ():
         if not (miniapp.WEB_DIR / asset).is_file():
             raise SystemExit(f"Brak Mini App: {asset}")
     print(f"OK {VERSION}")
@@ -4525,7 +4587,8 @@ class Commands:
                         "matches_at, public) VALUES (?,?,?,?,?,?,?,?)",
                         (account, name, last, now, profile.get("rank_tier"), now, now, 1 if matches else 0))
         self.db.commit()
-        miniapp.store_recent_matches(self.db, account, matches)
+        if miniapp:
+            miniapp.store_recent_matches(self.db, account, matches)
         when = ts(max(m.get("start_time", 0) for m in matches)) if matches else t("dota_never", lang)
         send(t("dota_added", lang, name=esc(name), rank=esc(dota_rank(profile, lang)), last=when), chat)
         if not matches:
@@ -4566,7 +4629,8 @@ class Commands:
             acc = data[3:]
             row = self.db.execute("SELECT name FROM dota WHERE account_id=?", (acc,)).fetchone()
             self.db.execute("DELETE FROM dota WHERE account_id=?", (acc,))
-            self.db.execute("DELETE FROM mini_dota_matches WHERE account_id=?", (acc,))
+            if miniapp:
+                self.db.execute("DELETE FROM mini_dota_matches WHERE account_id=?", (acc,))
             self.db.commit()
             lang = lang_for(chat)
             text, markup = self.dota_view(lang)
@@ -5670,7 +5734,7 @@ class Commands:
         self.restart = True
 
     def rollback(self, chat, lang):
-        ok, note = miniapp.rollback_release(BOT_PATH)
+        ok, note = miniapp.rollback_release(BOT_PATH) if miniapp else legacy_rollback()
         if not ok:
             send(t("rb_none", lang) + "\n" + esc(note), chat)
             return
@@ -5692,9 +5756,11 @@ def run():
     commands.watcher = amp_watch
     updates = UpdateMonitor(commands.amp, db)
     dota = DotaWatcher(db)
-    mini_ui = miniapp.MiniAppServer(sys.modules[__name__], commands, dota)
+    heal_files(db)
+    mini_ui = miniapp.MiniAppServer(sys.modules[__name__], commands, dota) if miniapp else None
     try:
-        mini_ui.start()  # opt-in: MINIAPP_URL must be configured
+        if mini_ui:
+            mini_ui.start()  # opt-in: MINIAPP_URL must be configured
     except Exception as e:
         log(f"Mini App not started: {type(e).__name__}: {e}")
         mini_ui = None
