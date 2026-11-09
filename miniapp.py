@@ -27,7 +27,7 @@ import urllib.request
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 DEFAULT_PORT = 8765
-MAX_AUTH_AGE = 24 * 3600
+MAX_AUTH_AGE = 3600  # Telegram signs a fresh session each time the panel opens
 SENSITIVE_ACTIONS = {"off", "stop", "restart", "update"}
 GAME_ACTIONS = {"on", "start", "off", "stop", "restart", "update", "backup"}
 WEB_FILES = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
@@ -556,15 +556,16 @@ class MiniAppServer:
             raise APIError(409, "Dla tej instancji trwa juz operacja")
         if action in SENSITIVE_ACTIONS and p.get("confirmed") is not True:
             raise APIError(400, "Potwierdz operacje")
+        lang = self.bot.lang_for(identity["id"])  # progress messages in the language this person chose
         with self.bot.via(self.bot.FRIENDS_TOKEN if identity["bot_kind"] == "friends" else ""):
             if (p.get("warn") is True and action in self.bot.WARN_ACTS and self.bot.WARN_SECONDS
                     and self.commands.players_on(name) and self.commands.amp.broadcast_command(instance)):
                 if self.commands.watcher:
-                    self.commands.watcher.schedule(name, action, identity["id"], "pl")
+                    self.commands.watcher.schedule(name, action, identity["id"], lang)
             else:
                 self.commands.amp.action(action, name)
                 if self.commands.watcher:
-                    self.commands.watcher.track(name, action, identity["id"], "pl")
+                    self.commands.watcher.track(name, action, identity["id"], lang)
             self.audit(identity, action, name)
         return {"ok": True, "action": action, "name": name}
 

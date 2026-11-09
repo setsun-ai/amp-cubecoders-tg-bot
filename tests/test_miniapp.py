@@ -144,6 +144,11 @@ class Bot:
                      "start_time": 12345, "kills": 12, "deaths": 2, "assists": 4}]
         return {"profile": {"personaname": "Fake player"}, "rank_tier": 55}
 
+    langs: dict = {}
+
+    def lang_for(self, chat_id=None):
+        return self.langs.get(str(chat_id), "pl")
+
     @staticmethod
     def via(token):
         from contextlib import nullcontext
@@ -493,3 +498,21 @@ def test_corrupt_opendota_match_response_is_upstream_error(fixture, monkeypatch)
     with pytest.raises(miniapp.APIError) as exc:
         server.fetch_match(123)
     assert exc.value.status == 502
+
+
+def test_a_session_older_than_an_hour_is_refused():
+    with pytest.raises(miniapp.APIError) as exc:
+        miniapp.validate_init_data(signed(auth_date=int(time.time()) - 2 * 3600), {"main": TOK_MAIN})
+    assert exc.value.status == 401
+    assert miniapp.validate_init_data(signed(auth_date=int(time.time()) - 30 * 60), {"main": TOK_MAIN})["id"] == 42
+
+
+def test_progress_of_a_panel_action_comes_in_the_users_language(fixture):
+    server, db, bot = fixture
+    bot.langs = {"50": "ru"}
+    server.dispatch(friend_user(), "POST /api/amp/instances/Mine/action", {"request_id": "langtest00001",
+                                                                           "action": "start"})
+    assert bot.commands.watcher.tracked[-1][-1] == "ru"
+    server.dispatch(friend_user(), "POST /api/amp/instances/Mine/action", {
+        "request_id": "langtest00002", "action": "restart", "confirmed": True, "warn": True})
+    assert bot.commands.watcher.scheduled[-1][-1] == "ru"
