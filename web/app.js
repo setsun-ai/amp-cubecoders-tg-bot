@@ -243,6 +243,20 @@ function field(label, input) {
   l.htmlFor = input.id;
   return add(holder, l, input);
 }
+// Enter in a one-line field does what the dialog's main button does.
+function submitOnEnter(input, button) {
+  input.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.isComposing) { event.preventDefault(); button.click(); }
+  });
+  return button;
+}
+// Follow the Telegram app: its light theme gets the light palette (style.css), anything else the dark one.
+function applyScheme() {
+  const light = tg?.colorScheme === 'light';
+  document.documentElement.dataset.scheme = light ? 'light' : 'dark';
+  tg?.setBackgroundColor?.(light ? 'secondary_bg_color' : '#0d1117');
+  tg?.setHeaderColor?.(light ? 'secondary_bg_color' : '#0d1117');
+}
 function notice(text, error = false) {
   clearTimeout(toastTimer);
   toastBox.textContent = text;
@@ -453,13 +467,14 @@ function showWatchModal() {
   const box = modal(t('watch_title'), t('watch_hint'));
   const input = el('input'); input.placeholder = t('example_id'); input.autocomplete = 'off';
   box.append(field('Dota Friend ID / URL', input));
-  box.append(btn(t('watch_add'), async () => {
+  box.append(submitOnEnter(input, btn(t('watch_add'), async () => {
     const id = input.value.trim();
     if (!id) return notice(t('enter_id'), true);
     try { await api('/api/dota/watch', { account_id: id, request_id: requestId() });
       closeModal(); notice(t('added')); await refresh(); }
     catch (e) { notice(e.message, true); }
-  }, 'btn btn-primary full'));
+  }, 'btn btn-primary full')));
+  input.focus();
 }
 function removePlayer(p) {
   const box = modal(t('remove_q', { name: p.name }), t('remove_hint'));
@@ -731,13 +746,13 @@ function editSetting(name, setting) {
     input.maxLength = 1000;
   }
   box.append(field(t('value'), input));
-  box.append(btn(t('save_setting'), async () => {
+  box.append(submitOnEnter(input, btn(t('save_setting'), async () => {
     try {
       await api(`/api/amp/instances/${encodeURIComponent(name)}/settings`,
         { node: setting.node, value: input.value, request_id: requestId() });
       closeModal(); notice(t('saved')); await ensureSettings(name, true);
     } catch (e) { notice(e.message, true); }
-  }, 'btn btn-primary full'));
+  }, 'btn btn-primary full')));
   box.append(btn(t('cancel'), closeModal, 'btn full'));
 }
 async function loadConsole(name) {
@@ -762,7 +777,9 @@ function renderConsole(inst) {
       state.console = { name: inst.name, lines: data.lines }; render(); }
     catch (e) { notice(e.message, true); }
   }, 'btn btn-primary full');
+  submitOnEnter(input, submit);
   add(root, f, submit, el('p', 'sub spaced', t('console_hint')));
+  output.scrollTop = output.scrollHeight;  // newest lines in view
 }
 
 /* --- Bootstrap, polling and accessibility --- */
@@ -845,8 +862,8 @@ function interacting() {
 function start() {
   applyLanguage(lang);
   tg?.ready(); tg?.expand();
-  tg?.setBackgroundColor?.('#0d1117');
-  tg?.setHeaderColor?.('#0d1117');
+  applyScheme();
+  tg?.onEvent?.('themeChanged', applyScheme);
   tg?.BackButton?.onClick(goBack);
   document.querySelector('#reload').addEventListener('click', () => refresh(true));
   document.querySelectorAll('[data-tab]').forEach(n => n.addEventListener('click', () => {

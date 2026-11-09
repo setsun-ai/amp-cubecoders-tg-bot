@@ -142,3 +142,43 @@ main { padding: 0 17px; }
 .live::before { content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .25; } }
 .why { margin: -4px 2px 12px; }
+
+/* Telegram's light theme (tg.colorScheme === 'light'): the same layout on light surfaces, Telegram's own
+   background, text and hint colours where it gives them. The dark look above stays as it was. */
+:root[data-scheme="light"] {
+  --bg: var(--tg-theme-secondary-bg-color, #f0f2f5); --panel: var(--tg-theme-bg-color, #ffffff);
+  --panel-2: #f5f7fa; --panel-3: #eceff3; --border: #dde2e9;
+  --muted: var(--tg-theme-hint-color, #6b7686); --text: var(--tg-theme-text-color, #14181f);
+  --accent: #a86f2c; --accent-deep: #f6ead9; --green: #1b8a5e; --red: #c5403b; --blue: #2b6fc2;
+  color-scheme: light;
+}
+[data-scheme="light"] .brand-symbol { border-color: #d9b98f; background: linear-gradient(135deg,#fbf1e3,#f3e3cc); color: #a86f2c; }
+[data-scheme="light"] .hero { background: linear-gradient(116deg,#fbf6ef 0%,#f4f1f8 55%,#e8f3f5 100%); border-color: #e4dfe9; }
+[data-scheme="light"] .hero::after { color: #000; }
+[data-scheme="light"] .hero.amp-hero { background: linear-gradient(115deg,#e9f2f7,#f1f4f9 54%,#f5f1f8); }
+[data-scheme="light"] .hero p, [data-scheme="light"] .setting-val { color: #4a5566; }
+[data-scheme="light"] .avatar { border-color: #cfd5de; background: linear-gradient(135deg,#eef1f5,#e2e7ee); color: #7a5428; }
+[data-scheme="light"] .ghost { background: #0000000a; }
+[data-scheme="light"] .btn-primary { color: #ffffff; }
+[data-scheme="light"] .btn-danger { background: #fdecea; color: #b3261e; border-color: #f3c2bd; }
+[data-scheme="light"] .btn-success { background: #e3f5ec; color: #1b7a52; border-color: #b6e2cb; }
+[data-scheme="light"] .chip.active { color: #7a4f1d; border-color: #e2c49c; }
+[data-scheme="light"] .match:active, [data-scheme="light"] .server-card:active { border-color: #d2b48c; }
+[data-scheme="light"] .hero-portrait, [data-scheme="light"] .item-icon { background: #eef2f6; border-color: #d3dbe4; color: #5b6878; }
+[data-scheme="light"] .badge, [data-scheme="light"] .badge.stopped { background: #eceef2; color: #5b6574; }
+[data-scheme="light"] .badge.win, [data-scheme="light"] .badge.running { background: #dff3ea; color: #16774f; }
+[data-scheme="light"] .badge.loss { background: #fbe5e4; color: #b3261e; }
+[data-scheme="light"] .badge.busy { background: #fbf0d9; color: #8a5d12; }
+[data-scheme="light"] .empty { border-color: #cdd3dc; }
+[data-scheme="light"] .server-icon { background: #e3edf3; }
+[data-scheme="light"] .progress { background: #e3e8ee; }
+[data-scheme="light"] .action-btn.danger { color: #b3261e; }
+[data-scheme="light"] .field input, [data-scheme="light"] .field textarea, [data-scheme="light"] .field select,
+[data-scheme="light"] .search-input { background: #ffffff; }
+[data-scheme="light"] .setting-item, [data-scheme="light"] .player-score { border-bottom-color: #0000000f; }
+[data-scheme="light"] .console { background: #f6f8fa; border-color: #dde2e9; color: #1d6b45; }
+[data-scheme="light"] .bottomnav { background: #fffffff2; }
+[data-scheme="light"] .nav-btn.active { color: #a86f2c; background: #a86f2c14; }
+[data-scheme="light"] .modal-scrim { background: #0b0f1666; }
+[data-scheme="light"] .modal { background: var(--panel); border-color: #dde2e9; box-shadow: 0 15px 60px #0003; }
+[data-scheme="light"] .toast { background: #2d3846; border-color: #2d3846; }
