@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.0 (2026-11)
+
+- Telegram Mini App: Dota match history and details, player watchlist and notification toggle.
+- Mobile AMP dashboard: instance metrics, lifecycle actions, players, editable safe settings, admin console.
+- Telegram initData authentication, friend instance access restrictions, idempotent commands and single-writer queue.
+- Optional HTTPS via Tailscale Serve/Funnel; multi-file release update and rollback.
+
+
 ## 2.7.0 (2026-11)
 
 - **🧩 Menu of tiles, like moodle-sync.** `/menu` (and `/start`) opens one message with tiles: 🎮 Servers, 👥 Online, 📊 Week, 📜 History, 🖥 Status, 🎯 Dota, 🔔 Updates, 👫 Friends, 🌐 Language and 🛠 Bot ▸ (version, update, roll back, commands). An answer replaces the menu with **↩️ Menu**; Servers and Friends open in it and have ↩️ Menu too; updates, Dota, language and the bot actions work as if typed. Friends get their own tiles (Servers, Online, History, Week), and an admin tile they tap says "🔒 Only the admin can do this". After picking a language you get the menu right away.

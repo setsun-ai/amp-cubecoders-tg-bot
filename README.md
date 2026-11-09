@@ -138,3 +138,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Privacy: [PRIVACY.md](PRIVACY.md). Secur
 ## License
 
 [MIT](LICENSE)
+
+## Telegram Mini App (v2.8.0)
+
+Dota history and AMP controls in Telegram: [setup and security](docs/MINIAPP.md).
