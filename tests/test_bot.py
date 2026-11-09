@@ -2213,3 +2213,66 @@ def test_menu_of_tiles_for_admin_and_friend(env, ui, monkeypatch):
                           "message": {"chat": {"id": 42}, "message_id": 7}})
     assert "tylko admin" in calls[0][1]["text"]
     assert tiles(typed("/cokolwiek", friend)[2])[0] == "h:servers"  # nieznana komenda: menu, nie lista
+
+
+# ---------- aktualizacja z 2.7.x: stary /update instaluje sam bot.py ----------
+
+def test_bot_py_alone_passes_its_selftest(tmp_path):
+    import shutil
+    import subprocess
+    import sys
+    shutil.copy(bot.__file__, tmp_path / "bot.py")  # bez miniapp.py i web/, jak po /update z 2.7.x
+    env = {"TG_TOKEN": "", "TG_CHAT_ID": "1", "PATH": "/usr/bin:/bin", "DB_PATH": str(tmp_path / "p.db")}
+    r = subprocess.run([sys.executable, "-I", str(tmp_path / "bot.py"), "--selftest"], capture_output=True, text=True,
+                       cwd=tmp_path, env=env, timeout=60)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_update_without_mini_app_files_fetches_all_of_them(tmp_path, monkeypatch):
+    import io
+    from pathlib import Path
+    repo = Path(bot.__file__).parent
+    served = []
+
+    def urlopen(req, timeout=0):
+        name = req.full_url.split("/v2.8.0/", 1)[1]
+        served.append(name)
+        return io.BytesIO((repo / name).read_bytes())
+
+    (tmp_path / "bot.py").write_bytes((repo / "bot.py").read_bytes())
+    monkeypatch.setattr(bot, "miniapp", None)
+    monkeypatch.setattr(bot, "BOT_PATH", str(tmp_path / "bot.py"))
+    monkeypatch.setattr(bot.urllib.request, "urlopen", urlopen)
+    ok, out = bot.install_release("v2.8.0")
+    assert ok, out
+    assert served[0] == "miniapp.py"  # najpierw instalator, potem wszystkie pliki wydania razem
+    assert (tmp_path / "miniapp.py").is_file() and (tmp_path / "web" / "index.html").is_file()
+
+
+def test_missing_mini_app_files_are_fetched_once_at_start(env, monkeypatch):
+    calls, sent = [], []
+    monkeypatch.setattr(bot, "miniapp", None)
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent.append(text))
+    monkeypatch.setattr(bot, "install_release", lambda tag: calls.append(tag) or (True, "OK"))
+    with pytest.raises(SystemExit):  # pliki sa: restart, systemd uruchamia pelna wersje
+        bot.heal_files(env.db)
+    bot.heal_files(env.db)  # nastepny start: bez kolejnej proby (bez petli restartow)
+    assert calls == [f"v{bot.VERSION}"]
+
+
+def test_failed_fetch_of_mini_app_files_tells_the_admin(env, monkeypatch):
+    sent = []
+    monkeypatch.setattr(bot, "miniapp", None)
+    monkeypatch.setattr(bot, "send", lambda text, chat_id=None, markup=None: sent.append(text))
+    monkeypatch.setattr(bot, "install_release", lambda tag: (False, "brak sieci"))
+    bot.heal_files(env.db)  # bez wyjatku: bot dziala dalej bez Mini App
+    assert sent and "/update force" in sent[-1]
+
+
+def test_rollback_without_mini_app_files_uses_the_old_backup(ui, tmp_path, monkeypatch):
+    (tmp_path / "bot.py").write_text("new")
+    (tmp_path / "bot.py.bak").write_text("old")  # tak zostawia 2.7.x
+    monkeypatch.setattr(bot, "miniapp", None)
+    monkeypatch.setattr(bot, "BOT_PATH", str(tmp_path / "bot.py"))
+    ui.c.rollback(1, "pl")
+    assert (tmp_path / "bot.py").read_text() == "old" and ui.c.restart
