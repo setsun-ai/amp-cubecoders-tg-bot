@@ -197,7 +197,7 @@ class MiniAppServer:
         self.httpd = None
         self.thread = None
         self.replay = {}
-        self.last_refresh = 0
+        self.last_refresh = None
         self.detail_cache = {}
         self.detail_lock = threading.Lock()
         self.items_cache = None
@@ -396,11 +396,12 @@ class MiniAppServer:
             return self.operation(identity, payload, lambda: self.unwatch_dota(payload))
         if route == "POST /api/dota/refresh":
             self.admin(scope)
-            if time.monotonic() - self.last_refresh < 300:
+            now = time.monotonic()
+            if self.last_refresh is not None and now - self.last_refresh < 300:
                 raise APIError(429, "Odswiezanie OpenDota: ponow za kilka minut")
             if self.dota is None or not self.bot.DOTA_CHECK_MINUTES:
                 raise APIError(409, "Synchronizacja OpenDota jest wylaczona")
-            self.last_refresh = time.monotonic()
+            self.last_refresh = now
             # Schedule a normal poll on the next main-loop iteration instead of
             # blocking the current web request on several upstream API calls.
             self.dota.last = 0

@@ -436,13 +436,17 @@ def test_detail_is_fetched_on_demand_and_cached(fixture, monkeypatch):
     assert called[0].endswith("/matches/66")
 
 
-def test_manual_refresh_schedules_poll_without_blocking(fixture):
+def test_manual_refresh_schedules_poll_without_blocking(fixture, monkeypatch):
+    clock = [42.0]
+    monkeypatch.setattr(miniapp.time, 'monotonic', lambda: clock[0])
     server, _, bot = fixture
     assert server.dispatch(main_user(), "POST /api/dota/refresh", {})["scheduled"]
     assert bot.dota.last == 0
     with pytest.raises(miniapp.APIError) as exc:
         server.dispatch(main_user(), "POST /api/dota/refresh", {})
     assert exc.value.status == 429
+    clock[0] += 301
+    assert server.dispatch(main_user(), 'POST /api/dota/refresh', {})['scheduled']
 
 
 def test_http_bad_post_does_not_reach_amp(fixture, monkeypatch, tmp_path):
