@@ -7,7 +7,7 @@
 
 🇵🇱 **[Polski](README.pl.md)** · 🇷🇺 **[Русский](README.ru.md)** · 🇺🇦 **[Українська](README.uk.md)**
 
-**A Telegram bot for game servers run by [AMP (CubeCoders)](https://cubecoders.com/AMP).** It tells you who joins and leaves, keeps a history of players, sends a weekly summary and watches the machine the servers run on. One Python file, standard library only, no AMP plugins. Polish, English, Russian and Ukrainian.
+**A Telegram bot for game servers run by [AMP (CubeCoders)](https://cubecoders.com/AMP).** It tells you who joins and leaves, keeps a history of players, sends a weekly summary and watches the machine the servers run on. Python standard library only, no AMP plugins: the bot is `bot.py`; the optional Mini App adds `miniapp.py` and `web/`. Polish, English, Russian and Ukrainian.
 
 ```
 🆕 NEW PLAYER!

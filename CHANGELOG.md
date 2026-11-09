@@ -6,6 +6,9 @@
 - Mobile AMP dashboard: instance metrics, lifecycle actions, players, editable safe settings, admin console.
 - Telegram initData authentication, friend instance access restrictions, idempotent commands and single-writer queue.
 - Optional HTTPS via Tailscale Serve/Funnel; multi-file release update and rollback.
+- Updating from 2.7.x with `/update` works: the new `bot.py` starts without the Mini App, downloads the other files of its release once and restarts (if that fails, it says so and keeps running). `deploy/update.sh` waits 5 seconds before checking the restarted service, so a bot that crashes right after starting is rolled back.
+- A Mini App session is valid for 1 hour (Telegram signs a new one each time the panel opens), not 24.
+- Progress of an action started in the panel comes in the language of the person who started it.
 
 
 ## 2.7.0 (2026-11)
