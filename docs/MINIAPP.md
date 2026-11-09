@@ -58,7 +58,9 @@ gh release create v2.8.0 --title "v2.8.0 · Telegram Mini App" --generate-notes
 
 **Back up first**: `/opt/amp-tg-bot/bot.py`, `/etc/amp-tg-bot.env`, `/var/lib/amp-tg-bot/players.db`, and your systemd unit. Use a shell on the host as an administrator. Do not paste credentials into chat.
 
-The old v2.7 Telegram `/update` **must not be used for the first upgrade**: it replaces only `bot.py`, so the new module would be missing. After `v2.8.0` is published, download and run the new updater over SSH:
+The Telegram `/update` of v2.7 works for the first upgrade too. It installs only `bot.py`, which starts without the Mini App, downloads the rest of its own release once (`miniapp.py`, `web/`, `deploy/`), passes the selftest and restarts. If that download fails, the bot keeps running without the panel and tells the admin to send `/update force`. A rollback from there uses the `bot.py.bak` that v2.7 left.
+
+Over SSH, the new updater does the same in one step:
 
 ```bash
 sudo curl -fsSL https://raw.githubusercontent.com/setsun-ai/amp-cubecoders-tg-bot/v2.8.0/deploy/update.sh \
@@ -67,7 +69,7 @@ sudo chmod 755 /usr/local/bin/amp-tg-bot-update
 sudo /usr/local/bin/amp-tg-bot-update v2.8.0
 ```
 
-The new updater stages **all application files**, executes `bot.py --selftest` against the staged tree, takes a snapshot of the previous version, replaces the files and restarts systemd. On startup failure it attempts a rollback. From v2.8.0 onward, `/update` and `/rollback` use the same multi-file mechanism (though manual server-side health checks are still required).
+The new updater stages **all application files**, executes `bot.py --selftest` against the staged tree, takes a snapshot of the previous version, replaces the files and restarts systemd. It checks the service 5 seconds after the restart, and if it has failed by then it attempts a rollback. From v2.8.0 onward, `/update` and `/rollback` use the same multi-file mechanism (though manual server-side health checks are still required).
 
 ### Configure Tailscale Serve (private by default)
 

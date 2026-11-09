@@ -7,7 +7,7 @@
 
 🇬🇧 **[English](README.md)** · 🇷🇺 **[Русский](README.ru.md)** · 🇺🇦 **[Українська](README.uk.md)**
 
-**Bot na Telegramie dla serwerów gier w [AMP (CubeCoders)](https://cubecoders.com/AMP).** Pisze, kto wchodzi i wychodzi, prowadzi historię graczy, wysyła podsumowanie tygodnia i pilnuje maszyny, na której stoją serwery. Jeden plik Pythona, sama biblioteka standardowa, bez wtyczek do AMP. Po polsku, angielsku, rosyjsku i ukraińsku.
+**Bot na Telegramie dla serwerów gier w [AMP (CubeCoders)](https://cubecoders.com/AMP).** Pisze, kto wchodzi i wychodzi, prowadzi historię graczy, wysyła podsumowanie tygodnia i pilnuje maszyny, na której stoją serwery. Sama biblioteka standardowa Pythona, bez wtyczek do AMP: bot to `bot.py`, a opcjonalny Mini App dokłada `miniapp.py` i `web/`. Po polsku, angielsku, rosyjsku i ukraińsku.
 
 ```
 🆕 NOWY GRACZ!
