@@ -19,9 +19,14 @@ TOK_MAIN = "10101:main-secret"
 TOK_FRIEND = "20202:friends-secret"
 
 
-def signed(uid=42, token=TOK_MAIN, auth_date=None, tamper=False):
-    values = {"auth_date": str(auth_date or int(time.time())),
+def signed(uid=42, token=TOK_MAIN, auth_date=None, tamper=False, signature=True):
+    """initData as Telegram apps send it: since Bot API 8.0 with a `signature` field (for third parties), which -
+    per core.telegram.org/bots/webapps - is part of the data-check-string of the bot-token HMAC; only `hash` isn't."""
+    values = {"auth_date": str(auth_date or int(time.time())), "query_id": "AAHdF6IQAAAAAN0XohDhrOrc",
               "user": json.dumps({"id": uid, "first_name": "Test"}, separators=(",", ":"))}
+    if signature:
+        values["signature"] = ("SignaturemF0lPeWNuBR0Ww7tz2Rr6Hb-aNdbUdWcl6Qs6nYbQ_"
+                               "6sLcIIxTjvrd8ccr8cX6CeT2jUpZeeDZyYwDcA")
     check = "\n".join(f"{k}={v}" for k, v in sorted(values.items()))
     key = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
     values["hash"] = hmac.new(key, check.encode(), hashlib.sha256).hexdigest()
@@ -516,3 +521,12 @@ def test_progress_of_a_panel_action_comes_in_the_users_language(fixture):
     server.dispatch(friend_user(), "POST /api/amp/instances/Mine/action", {
         "request_id": "langtest00002", "action": "restart", "confirmed": True, "warn": True})
     assert bot.commands.watcher.scheduled[-1][-1] == "ru"
+
+
+def test_a_session_from_a_current_telegram_app_with_signature_is_accepted():
+    """What the phone sent on 9 November: the panel said "Nieprawidlowy podpis Telegrama"."""
+    assert miniapp.validate_init_data(signed(), {"main": TOK_MAIN})["id"] == 42
+    assert miniapp.validate_init_data(signed(signature=False), {"main": TOK_MAIN})["id"] == 42  # older apps
+    forged = signed().replace("signature=Signature", "signature=Forged")
+    with pytest.raises(miniapp.APIError):  # the signature field is covered by the hash: changing it breaks it
+        miniapp.validate_init_data(forged, {"main": TOK_MAIN})

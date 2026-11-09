@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.8.1 (2026-11)
+
+- **Fix: the Mini App said "Nieprawidlowy podpis Telegrama" in every current Telegram app.** Since Bot API 8.0 Telegram adds a `signature` field to the session data, and the bot's check left it out of the signed text, while Telegram includes every field except `hash` (leaving `signature` out is only for the third-party Ed25519 check). Now it follows core.telegram.org/bots/webapps.
+
 ## 2.8.0 (2026-11)
 
 - Telegram Mini App: Dota match history and details, player watchlist and notification toggle.

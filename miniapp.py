@@ -71,8 +71,9 @@ def validate_init_data(raw: str, bot_tokens: dict[str, str], now: int | None = N
     now = int(time.time()) if now is None else now
     if auth_date > now + 30 or now - auth_date > MAX_AUTH_AGE:
         raise APIError(401, "Sesja Telegrama wygasla. Otworz panel ponownie")
-    # Telegram: the HMAC data-check-string excludes hash and signature.
-    check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()) if k not in ("hash", "signature"))
+    # core.telegram.org/bots/webapps: the bot-token HMAC covers every field except `hash` - `signature` included
+    # (only the Ed25519 check for third parties leaves `signature` out).
+    check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()) if k != "hash")
     for kind, token in bot_tokens.items():
         if not token:
             continue
