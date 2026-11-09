@@ -530,3 +530,10 @@ def test_a_session_from_a_current_telegram_app_with_signature_is_accepted():
     forged = signed().replace("signature=Signature", "signature=Forged")
     with pytest.raises(miniapp.APIError):  # the signature field is covered by the hash: changing it breaks it
         miniapp.validate_init_data(forged, {"main": TOK_MAIN})
+
+
+def test_the_panel_opens_in_the_language_the_user_picked_in_the_bot(fixture):
+    server, db, bot = fixture
+    bot.langs = {"50": "uk", "42": "en"}
+    assert server.dispatch(friend_user(), "GET /api/me", {})["lang"] == "uk"
+    assert server.dispatch(main_user(), "GET /api/me", {})["lang"] == "en"

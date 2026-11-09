@@ -36,6 +36,8 @@ RELEASE_FILES = ("bot.py", "miniapp.py", "web/index.html", "web/app.js", "web/st
 
 
 class APIError(Exception):
+    """`detail` is a code (bad_signature); the page shows it in the user's language from its err_<code> texts."""
+
     def __init__(self, status: int, detail: str):
         super().__init__(detail)
         self.status, self.detail = status, detail
@@ -55,7 +57,7 @@ def public_url():
 def validate_init_data(raw: str, bot_tokens: dict[str, str], now: int | None = None):
     """Validate Telegram HMAC and expiry, without trusting initDataUnsafe."""
     if not isinstance(raw, str) or not raw or len(raw) > 8192:
-        raise APIError(401, "Otworz panel w Telegramie")
+        raise APIError(401, "open_in_telegram")
     try:
         pairs = urllib.parse.parse_qsl(raw, keep_blank_values=True, strict_parsing=True, max_num_fields=32)
         fields = dict(pairs)
@@ -67,10 +69,10 @@ def validate_init_data(raw: str, bot_tokens: dict[str, str], now: int | None = N
         if type(uid) is not int or uid <= 0:
             raise ValueError("invalid user id")
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
-        raise APIError(401, "Nieprawidlowe dane sesji Telegrama") from None
+        raise APIError(401, "bad_session") from None
     now = int(time.time()) if now is None else now
     if auth_date > now + 30 or now - auth_date > MAX_AUTH_AGE:
-        raise APIError(401, "Sesja Telegrama wygasla. Otworz panel ponownie")
+        raise APIError(401, "session_expired")
     # core.telegram.org/bots/webapps: the bot-token HMAC covers every field except `hash` - `signature` included
     # (only the Ed25519 check for third parties leaves `signature` out).
     check = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()) if k != "hash")
@@ -81,7 +83,7 @@ def validate_init_data(raw: str, bot_tokens: dict[str, str], now: int | None = N
         digest = hmac.new(key, check.encode("utf-8"), hashlib.sha256).hexdigest()
         if hmac.compare_digest(digest, fields["hash"].lower()):
             return {"id": uid, "user": user, "bot_kind": kind}
-    raise APIError(401, "Nieprawidlowy podpis Telegrama")
+    raise APIError(401, "bad_signature")
 
 
 def ensure_schema(db: sqlite3.Connection):
@@ -172,7 +174,7 @@ def serialize_match(m, account_id, name, hero):
 def match_detail_data(raw):
     """Allowlisted detail fields; don't expose arbitrary upstream content."""
     if not isinstance(raw, dict):
-        raise APIError(502, "OpenDota nie zwrocila danych meczu")
+        raise APIError(502, "opendota_no_match_data")
     players = []
     for player in (raw.get("players") or [])[:10]:
         if not isinstance(player, dict):
@@ -270,19 +272,19 @@ class MiniAppServer:
             if path.path == "/api/health" and method in ("GET", "HEAD"):
                 return self.respond(h, 200, {"ok": True}, head=method == "HEAD")
             if not path.path.startswith("/api/"):
-                raise APIError(404, "Nie ma takiej strony")
+                raise APIError(404, "not_found")
             if method == "HEAD":
-                raise APIError(405, "Metoda niedostepna")
+                raise APIError(405, "method_not_allowed")
             tokens = {"main": self.bot.TOKEN, "friends": self.bot.FRIENDS_TOKEN}
             identity = validate_init_data(h.headers.get("X-Telegram-Init-Data", ""), tokens)
             payload = {}
             if method == "POST":
                 size = int(h.headers.get("Content-Length", "0"))
                 if size <= 0 or size > 65536 or h.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                    raise APIError(400, "Nieprawidlowe dane zadania")
+                    raise APIError(400, "bad_request_data")
                 payload = json.loads(h.rfile.read(size))
                 if not isinstance(payload, dict):
-                    raise APIError(400, "Oczekiwano obiektu JSON")
+                    raise APIError(400, "json_object_expected")
             if method == "GET" and path.path == "/api/dota/items":
                 self.call_main(identity, "authorize_items", {})
                 data = self.fetch_items()
@@ -297,10 +299,10 @@ class MiniAppServer:
         except APIError as e:
             self.respond(h, e.status, {"error": e.detail})
         except (json.JSONDecodeError, ValueError):
-            self.respond(h, 400, {"error": "Nieprawidlowy JSON"})
+            self.respond(h, 400, {"error": "bad_json"})
         except Exception as e:
             self.bot.log(f"Mini App request failure: {type(e).__name__}: {str(e)[:120]}")
-            self.respond(h, 500, {"error": "Blad panelu. Sprawdz log uslugi"})
+            self.respond(h, 500, {"error": "panel_error"})
 
     def call_main(self, identity, route, data):
         event = threading.Event()
@@ -308,9 +310,9 @@ class MiniAppServer:
         try:
             self.jobs.put_nowait(job)
         except queue.Full:
-            raise APIError(503, "Serwer jest zajety") from None
+            raise APIError(503, "server_busy") from None
         if not event.wait(45):
-            raise APIError(504, "Panel nie otrzymal odpowiedzi. Sprawdz stan przed ponowieniem operacji")
+            raise APIError(504, "no_reply")
         if "error" in job:
             raise job["error"]
         return job.get("result", {})
@@ -328,7 +330,7 @@ class MiniAppServer:
                 job["error"] = e
             except Exception as e:
                 self.bot.log(f"Mini App action {job['route']}: {type(e).__name__}: {str(e)[:180]}")
-                job["error"] = APIError(502, "Operacja nie powiodla sie. Sprawdz log bota")
+                job["error"] = APIError(502, "operation_failed")
             finally:
                 job["event"].set()
                 self.jobs.task_done()
@@ -338,26 +340,26 @@ class MiniAppServer:
         if uid in self.bot.ADMINS:
             return None  # full access, including Dota.
         if identity["bot_kind"] != "friends" and self.bot.FRIENDS_TOKEN:
-            raise APIError(403, "Ten bot jest przeznaczony tylko dla administratora")
+            raise APIError(403, "admin_only_bot")
         friend = self.bot.friend_get(self.commands.db, uid)
         if not friend:
-            raise APIError(403, "Brak przyznanego dostepu")
+            raise APIError(403, "no_access")
         return set(friend["instances"])
 
     @staticmethod
     def scoped_name(scope, name):
         if not name or (scope is not None and name not in scope):
-            raise APIError(403, "Brak dostepu do instancji")
+            raise APIError(403, "no_instance_access")
 
     @staticmethod
     def admin(scope):
         if scope is not None:
-            raise APIError(403, "Ta funkcja wymaga uprawnien administratora")
+            raise APIError(403, "admin_required")
 
     def idem(self, identity, payload):
         key = payload.get("request_id")
         if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9-]{12,80}", key):
-            raise APIError(400, "Brak identyfikatora operacji")
+            raise APIError(400, "no_request_id")
         now = time.time()
         self.replay = {k: v for k, v in self.replay.items() if now - v[0] < 600}
         return (identity["id"], key)
@@ -376,7 +378,7 @@ class MiniAppServer:
         who = identity["user"]
         if route == "GET /api/me":
             return {"id": uid, "name": who.get("first_name") or who.get("username") or "Gracz",
-                    "admin": scope is None, "version": self.bot.VERSION,
+                    "admin": scope is None, "version": self.bot.VERSION, "lang": self.bot.lang_for(uid),
                     "dota_notifications": dota_notifications_enabled(self.commands.db),
                     "warn_seconds": self.bot.WARN_SECONDS}
         if route == "GET /api/dota":
@@ -386,7 +388,7 @@ class MiniAppServer:
             self.admin(scope)
             value = payload.get("enabled")
             if type(value) is not bool:
-                raise APIError(400, "Podaj enabled: true lub false")
+                raise APIError(400, "enabled_bool")
             self.bot.meta_set(self.commands.db, "miniapp:dota_notify", "1" if value else "0")
             return {"enabled": value}
         if route == "POST /api/dota/watch":
@@ -399,9 +401,9 @@ class MiniAppServer:
             self.admin(scope)
             now = time.monotonic()
             if self.last_refresh is not None and now - self.last_refresh < 300:
-                raise APIError(429, "Odswiezanie OpenDota: ponow za kilka minut")
+                raise APIError(429, "opendota_rate_limited")
             if self.dota is None or not self.bot.DOTA_CHECK_MINUTES:
-                raise APIError(409, "Synchronizacja OpenDota jest wylaczona")
+                raise APIError(409, "opendota_sync_off")
             self.last_refresh = now
             # Schedule a normal poll on the next main-loop iteration instead of
             # blocking the current web request on several upstream API calls.
@@ -418,7 +420,7 @@ class MiniAppServer:
                 "ON d.account_id=m.account_id WHERE m.match_id=? LIMIT 1", (mid,)
             ).fetchone()
             if not exists:
-                raise APIError(404, "Nie ma meczu w obserwowanej historii")
+                raise APIError(404, "match_not_watched")
             return {"ok": True}
         if route == "GET /api/amp/instances":
             return self.amp_instances(scope)
@@ -443,7 +445,7 @@ class MiniAppServer:
                     return self.operation(identity, payload, lambda: self.console(identity, name, payload))
             if item == "action" and method == "POST":
                 return self.operation(identity, payload, lambda: self.amp_action(identity, inst, payload))
-        raise APIError(404, "Nieznany endpoint")
+        raise APIError(404, "unknown_endpoint")
 
     def get_dota(self):
         db = self.commands.db
@@ -475,18 +477,18 @@ class MiniAppServer:
     def watch_dota(self, p):
         account = self.bot.dota_account_id(str(p.get("account_id") or ""))
         if account is None:
-            raise APIError(400, "Podaj prawidlowe Friend ID lub link do profilu")
+            raise APIError(400, "bad_friend_id")
         try:
             profile = self.bot.opendota(f"players/{account}")
             matches = self.bot.opendota(f"players/{account}/recentMatches") or []
         except Exception:
-            raise APIError(502, "OpenDota nie odpowiada") from None
+            raise APIError(502, "opendota_down") from None
         name = ((profile or {}).get("profile") or {}).get("personaname")
         if not name:
-            raise APIError(404, "OpenDota nie rozpoznaje gracza")
+            raise APIError(404, "opendota_unknown_player")
         existing = self.commands.db.execute("SELECT 1 FROM dota WHERE account_id=?", (account,)).fetchone()
         if existing:
-            raise APIError(409, "Gracz jest juz obserwowany")
+            raise APIError(409, "already_watched")
         last = max((int(m.get("match_id", 0)) for m in matches if isinstance(m, dict)), default=0)
         now = int(time.time())
         self.commands.db.execute(
@@ -501,7 +503,7 @@ class MiniAppServer:
         try:
             account = int(p["account_id"])
         except (KeyError, TypeError, ValueError):
-            raise APIError(400, "Brak ID gracza") from None
+            raise APIError(400, "no_player_id") from None
         self.commands.db.execute("DELETE FROM dota WHERE account_id=?", (account,))
         self.commands.db.execute("DELETE FROM mini_dota_matches WHERE account_id=?", (account,))
         self.commands.db.commit()
@@ -534,16 +536,16 @@ class MiniAppServer:
         node, value = p.get("node"), p.get("value")
         allowed = {s["node"]: s for group in self.get_settings(scope, name) for s in group["items"]}
         if not isinstance(node, str) or node not in allowed:
-            raise APIError(403, "Ustawienie niedostepne")
+            raise APIError(403, "setting_unavailable")
         setting = allowed[node]
         if setting["enum"] and str(value) not in {str(k) for k, _ in setting["enum"]}:
-            raise APIError(400, "Nieprawidlowa wartosc z listy")
+            raise APIError(400, "bad_enum_value")
         if setting["type"] == "checkbox":
             if value not in (True, False, "true", "false"):
-                raise APIError(400, "Oczekiwano true/false")
+                raise APIError(400, "bool_expected")
             value = "true" if str(value).lower() == "true" else "false"
         elif not isinstance(value, (str, int, float)) or len(str(value)) > 1000 or "\x00" in str(value):
-            raise APIError(400, "Nieprawidlowa wartosc ustawienia")
+            raise APIError(400, "bad_setting_value")
         self.commands.amp.set_config(name, node, value)
         self.audit(identity, f"⚙️ {node}", name)
         return {"ok": True, "node": node, "value": value}
@@ -552,11 +554,11 @@ class MiniAppServer:
         action = p.get("action")
         name = instance["name"]
         if action not in GAME_ACTIONS:
-            raise APIError(400, "Nieznana operacja")
+            raise APIError(400, "unknown_action")
         if self.commands.watcher and self.commands.watcher.busy(name):
-            raise APIError(409, "Dla tej instancji trwa juz operacja")
+            raise APIError(409, "operation_running")
         if action in SENSITIVE_ACTIONS and p.get("confirmed") is not True:
-            raise APIError(400, "Potwierdz operacje")
+            raise APIError(400, "confirm_required")
         lang = self.bot.lang_for(identity["id"])  # progress messages in the language this person chose
         with self.bot.via(self.bot.FRIENDS_TOKEN if identity["bot_kind"] == "friends" else ""):
             if (p.get("warn") is True and action in self.bot.WARN_ACTS and self.bot.WARN_SECONDS
@@ -574,7 +576,7 @@ class MiniAppServer:
         command = p.get("command")
         if (not isinstance(command, str) or not command.strip() or len(command) > 200
                 or "\n" in command or "\r" in command):
-            raise APIError(400, "Komenda musi byc pojedyncza linia (maks. 200 znakow)")
+            raise APIError(400, "bad_console_command")
         result = self.commands.amp.console(name, command.strip())
         self.audit(identity, f"💻 {command.strip()[:50]}", name)
         return {"lines": result}
@@ -595,10 +597,10 @@ class MiniAppServer:
             with urllib.request.urlopen(request, timeout=18) as response:
                 raw = response.read(2_000_001)
                 if len(raw) > 2_000_000:
-                    raise APIError(502, "Lista przedmiotow jest za duza")
+                    raise APIError(502, "items_too_big")
             payload = json.loads(raw)
         except (urllib.error.URLError, TimeoutError, ValueError):
-            raise APIError(502, "Nie mozna pobrac listy przedmiotow") from None
+            raise APIError(502, "items_unavailable") from None
         items = {}
         for key, item in (payload.items() if isinstance(payload, dict) else []):
             if not isinstance(item, dict) or type(item.get("id")) is not int:
@@ -614,7 +616,7 @@ class MiniAppServer:
 
     def fetch_match(self, match_id):
         if match_id <= 0 or match_id >= 2 ** 64:
-            raise APIError(400, "Nieprawidlowe ID meczu")
+            raise APIError(400, "bad_match_id")
         now = time.monotonic()
         with self.detail_lock:
             cached = self.detail_cache.get(match_id)
@@ -626,13 +628,13 @@ class MiniAppServer:
             with urllib.request.urlopen(request, timeout=18) as response:
                 raw = response.read(2_000_001)
                 if len(raw) > 2_000_000:
-                    raise APIError(502, "Odpowiedz OpenDota jest za duza")
+                    raise APIError(502, "opendota_too_big")
         except (urllib.error.URLError, TimeoutError):
-            raise APIError(502, "OpenDota jest obecnie niedostepna") from None
+            raise APIError(502, "opendota_unavailable") from None
         try:
             data = match_detail_data(json.loads(raw))
         except (ValueError, TypeError):
-            raise APIError(502, "OpenDota zwrocila nieprawidlowe dane meczu") from None
+            raise APIError(502, "opendota_bad_match_data") from None
         with self.detail_lock:
             if len(self.detail_cache) >= 50:
                 oldest = min(self.detail_cache, key=lambda x: self.detail_cache[x][0])

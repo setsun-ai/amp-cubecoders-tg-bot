@@ -17,11 +17,11 @@
       <div class="brand-copy"><div class="eyebrow">TELEGRAM MINI APP</div><div class="brand">AMP <span class="dot">•</span> DOTA HUB</div></div>
       <button class="icon-btn" id="reload" title="Odśwież" aria-label="Odśwież dane">↻</button>
     </header>
-    <div class="connection" id="connection" role="status"><span class="connection-dot"></span><span>Łączenie z botem…</span></div>
-    <main id="app" aria-live="polite"><div class="loading"><div class="spinner"></div><p>Wczytywanie panelu</p></div></main>
+    <div class="connection" id="connection" role="status"><span class="connection-dot"></span><span data-t="connecting">Łączenie z botem…</span></div>
+    <main id="app" aria-live="polite"><div class="loading"><div class="spinner"></div><p data-t="loading_panel">Wczytywanie panelu</p></div></main>
     <nav class="bottomnav" aria-label="Nawigacja główna" id="bottomnav">
-      <button data-tab="dota" class="nav-btn active"><span class="nav-icon">✦</span><span>Dota 2</span></button>
-      <button data-tab="amp" class="nav-btn"><span class="nav-icon">▣</span><span>Serwery AMP</span></button>
+      <button data-tab="dota" class="nav-btn active"><span class="nav-icon">✦</span><span data-t="nav_dota">Dota 2</span></button>
+      <button data-tab="amp" class="nav-btn"><span class="nav-icon">▣</span><span data-t="nav_amp">Serwery AMP</span></button>
     </nav>
   </div>
   <div id="modal-root"></div>
