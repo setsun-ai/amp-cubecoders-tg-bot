@@ -80,6 +80,12 @@ sudo tailscale serve --bg --https=443 http://127.0.0.1:8765
 sudo tailscale serve status
 ```
 
+**One HTTPS port, one panel.** A machine has one Tailscale name, and `--https=443` belongs to whichever program
+set it last. If another panel already uses 443 on this machine (for example compute-bot, whose installer
+claims 443), give this one its own port instead of 443 — `--https=8443` — and put the port in the URL:
+`MINIAPP_URL=https://my-host.my-tailnet.ts.net:8443`. Otherwise the 📱 Panel button opens the other program's
+page, which refuses this bot's Telegram signature.
+
 Use the HTTPS URL shown by `tailscale serve status`. For example (not a real URL):
 
 ```text
