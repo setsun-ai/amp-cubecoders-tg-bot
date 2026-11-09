@@ -33,8 +33,8 @@ const STRINGS = {
   "losses": ["Przegrane", "Losses", "Поражения", "Поразки"],
   "no_matches_filter": ["Brak meczów dla tych filtrów", "No matches for these filters", "Нет матчей для этих фильтров", "Немає матчів для цих фільтрів"],
   "no_matches_hint": ["Historia zapełnia się podczas synchronizacji OpenDota.", "The history fills up as OpenDota syncs.", "История заполняется при синхронизации с OpenDota.", "Історія заповнюється під час синхронізації з OpenDota."],
-  "notif_title": ["Powiadomienia o nowych meczach", "New match notifications", "Уведомления о новых матчах", "Сповіщення про нові матчі"],
-  "notif_hint": ["Historia zapisuje się niezależnie od powiadomień.", "The history is kept either way.", "История сохраняется независимо от уведомлений.", "Історія зберігається незалежно від сповіщень."],
+  "notif_title": ["Bot pisze na czacie o nowych meczach", "The bot posts new matches in the chat", "Бот пишет в чат о новых матчах", "Бот пише в чат про нові матчі"],
+  "notif_hint": ["Historia w panelu zapisuje się zawsze, także gdy bot milczy.", "The panel keeps the history either way, even when the bot stays quiet.", "История в панели сохраняется всегда, даже когда бот молчит.", "Історія в панелі зберігається завжди, навіть коли бот мовчить."],
   "notif_on": ["🔔 Włączone", "🔔 On", "🔔 Включены", "🔔 Увімкнено"],
   "notif_off": ["🔕 Wyłączone", "🔕 Off", "🔕 Выключены", "🔕 Вимкнено"],
   "notif_changed": ["Zmieniono powiadomienia", "Notifications changed", "Уведомления изменены", "Сповіщення змінено"],
@@ -106,7 +106,10 @@ const STRINGS = {
   "warn_and_wait": ["⏳ Ostrzeż i odczekaj {s} s", "⏳ Warn and wait {s} s", "⏳ Предупредить и подождать {s} с", "⏳ Попередити й зачекати {s} с"],
   "run_now": ["⚡ Wykonaj teraz", "⚡ Run now", "⚡ Выполнить сейчас", "⚡ Виконати зараз"],
   "confirm": ["Potwierdź", "Confirm", "Подтвердить", "Підтвердити"],
-  "queued": ["Zlecono operację. Postęp przyjdzie też w Telegramie.", "Operation started. Progress also comes in Telegram.", "Операция запущена. Ход придёт и в Telegram.", "Операцію запущено. Перебіг прийде й у Telegram."],
+  "queued": ["Zlecono: {action}. Postęp widać tutaj i w Telegramie.", "Started: {action}. Progress shows here and in Telegram.", "Запущено: {action}. Ход виден здесь и в Telegram.", "Запущено: {action}. Перебіг видно тут і в Telegram."],
+  "op_done": ["✓ {inst}: {op} — zakończone", "✓ {inst}: {op} — finished", "✓ {inst}: {op} — завершено", "✓ {inst}: {op} — завершено"],
+  "why_busy": ["Przyciski czekają, aż skończy się: {op}.", "The buttons wait until this finishes: {op}.", "Кнопки ждут окончания: {op}.", "Кнопки чекають, доки завершиться: {op}."],
+  "why_off": ["Instancja AMP jest wyłączona, więc działa tylko „{start}” i „{on}”.", "The AMP instance is off, so only “{start}” and “{on}” work.", "Инстанс AMP выключен, поэтому работают только «{start}» и «{on}».", "Інстанс AMP вимкнено, тому працюють лише «{start}» і «{on}»."],
   "loading_players": ["Wczytywanie graczy", "Loading players", "Загрузка игроков", "Завантаження гравців"],
   "loading_players_hint": ["Pobieranie listy z AMP…", "Fetching the list from AMP…", "Получение списка из AMP…", "Отримання списку з AMP…"],
   "error": ["Błąd", "Error", "Ошибка", "Помилка"],
@@ -353,6 +356,7 @@ function heroPortrait(m) {
   }
   return box;
 }
+function opName(op) { return STRINGS[`act_${op}`] ? t(`act_${op}`) : String(op); }
 function setTab(name) {
   state.tab = name;
   state.server = null;
@@ -383,7 +387,7 @@ function renderDota() {
   add(stats, stat(data.players.length, t('st_watched')),
     stat(summaries.length, t('st_matches')),
     stat(summaries.length ? `${Math.round(100 * wins / summaries.length)}%` : '—', t('st_winrate'), 'green'));
-  root.append(stats);
+  root.append(stats, notificationSwitch(data));
   section(root, t('watched_players'), t('add'), showWatchModal);
   const profiles = el('div', 'profile-list');
   if (!data.players.length) profiles.append(empty(t('nobody_watched'), t('nobody_watched_hint'), '🎯'));
@@ -407,18 +411,18 @@ function renderDota() {
   if (!visible.length) matches.append(empty(t('no_matches_filter'), t('no_matches_hint'), '▤'));
   for (const m of visible.slice(0, 250)) matches.append(matchCard(m));
   root.append(matches);
-  const toggle = el('div', 'panel spaced');
-  const label = el('div');
-  add(label, el('strong', '', t('notif_title')),
-    el('div', 'sub', t('notif_hint')));
+}
+// Right under the numbers: whether the bot also posts each new match in the chat (the panel keeps them either way).
+function notificationSwitch(data) {
+  const toggle = el('div', 'panel spaced switch-row');
+  const label = add(el('div'), el('strong', '', t('notif_title')), el('div', 'sub', t('notif_hint')));
   const turn = btn(data.notifications ? t('notif_on') : t('notif_off'), async () => {
     try { await api('/api/dota/notifications', { enabled: !data.notifications });
       data.notifications = !data.notifications; notice(t('notif_changed')); render(); }
     catch (e) { notice(e.message, true); }
-  }, 'btn small');
-  toggle.style.display = 'flex'; toggle.style.alignItems = 'center'; toggle.style.justifyContent = 'space-between'; toggle.style.gap = '12px';
-  add(toggle, label, turn);
-  root.append(toggle);
+  }, 'btn small' + (data.notifications ? ' on' : ''));
+  turn.setAttribute('aria-pressed', String(Boolean(data.notifications)));
+  return add(toggle, label, turn);
 }
 function playerCard(p, total = {}) {
   const box = el('div', 'profile');
@@ -577,7 +581,7 @@ function renderServer() {
   const label = el('div', 'section-kicker', t('inst_status'));
   const status = el('h2', '', inst.state_text || t('unknown')); status.style.margin = '9px 0';
   add(banner, label, status, el('div', 'sub', `${inst.module || t('game')} • ${t('n_players_online', { n: inst.players || 0 })}`));
-  if (inst.busy) add(banner, el('p', 'gold tiny', t('op_running', { op: inst.busy })));
+  if (inst.busy) add(banner, el('p', 'gold tiny live', t('op_running', { op: opName(inst.busy) })));
   root.append(banner);
   const tabs = el('div', 'tabstrip');
   const choices = [['overview', t('tab_control')], ['players', t('tab_players')], ['settings', t('tab_settings')]];
@@ -596,6 +600,10 @@ function renderServerOverview(inst) {
   root.append(add(el('div', 'stats-row'), stat(percent(inst.cpu?.pct), 'CPU'),
     stat(percent(inst.mem?.pct), 'RAM'), stat(inst.players ?? 0, t('tab_players'))));
   section(root, t('server_actions'));
+  // Say why some buttons are grey before the user taps them.
+  const why = inst.busy ? t('why_busy', { op: opName(inst.busy) }) :
+    !inst.running ? t('why_off', { start: t('act_start'), on: t('act_on') }) : '';
+  if (why) root.append(el('p', 'gold tiny why', why));
   const grid = el('div', 'actions-grid');
   const actions = [
     { id: 'start', icon: '▶' }, { id: 'stop', icon: '■', danger: true },
@@ -631,7 +639,9 @@ function confirmAction(inst, action) {
     const id = requestId();
     try { await api(`/api/amp/instances/${encodeURIComponent(inst.name)}/action`,
       { action: action.id, confirmed: true, warn: choice.warn, request_id: id });
-      closeModal(); notice(t('queued')); await refresh(); }
+      closeModal(); notice(t('queued', { action: action.label }));
+      tg?.HapticFeedback?.notificationOccurred('success');
+      state.watchUntil = Date.now() + 30000; await refresh(); }
     catch (e) { notice(e.message, true); }
   }, choice.css));
   box.append(btn(t('cancel'), closeModal, 'btn full'));
@@ -778,6 +788,7 @@ async function refresh(interactive = false) {
       if (dotaResult?.status === 'fulfilled') state.dota = dotaResult.value;
       else if (!state.dota) state.dota = { players: [], matches: [], totals: {}, notifications: true };
     }
+    noteFinished(state.amp.instances || []);
     state.lastUpdate = new Date();
     setConnection(true, t('connected', { name: me.name,
       time: new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(state.lastUpdate) }));
@@ -792,7 +803,44 @@ async function refresh(interactive = false) {
   } finally {
     state.busy = false;
     document.querySelector('#reload').textContent = '↻';
+    scheduleProgress();
   }
+}
+// While an operation runs (or for 30 s after one was started) the server list is re-read every 3 s, so the
+// badge and the banner move on their own and the end of the operation shows up here, not only in the chat.
+let progressTimer = null;
+function scheduleProgress() {
+  clearTimeout(progressTimer);
+  const running = (state.amp?.instances || []).some(i => i.busy);
+  if (running || Date.now() < (state.watchUntil || 0)) progressTimer = setTimeout(pollProgress, 3000);
+}
+async function pollProgress() {
+  if (state.busy || document.visibilityState !== 'visible') return scheduleProgress();
+  try {
+    const amp = await api('/api/amp/instances');
+    state.amp = amp;
+    noteFinished(amp.instances || []);
+    if (!interacting()) render();
+  } catch (e) { /* the 20 s refresh reports connection problems */ }
+  scheduleProgress();
+}
+function noteFinished(instances) {
+  const before = state.running || {};
+  state.running = Object.fromEntries(instances.filter(i => i.busy).map(i => [i.name, i.busy]));
+  for (const [name, op] of Object.entries(before)) {
+    if (state.running[name]) continue;
+    const inst = instances.find(i => i.name === name);
+    if (!inst) continue;  // AMP didn't answer this time: no news, not "finished"
+    notice(t('op_done', { inst: inst.friendly || name, op: opName(op) }));
+    tg?.HapticFeedback?.notificationOccurred('success');
+    state.watchUntil = 0;
+  }
+}
+// Re-rendering would steal focus, typed text or an open dialog.
+function interacting() {
+  return modalRoot.children.length > 0 ||
+    Boolean(state.server && ['settings', 'console'].includes(state.serverTab)) ||
+    Boolean(document.activeElement?.matches('input,textarea,select'));
 }
 function start() {
   applyLanguage(lang);
@@ -813,14 +861,11 @@ function start() {
   refresh();
   setInterval(() => {
     // Keep focus, text edits and expanded settings groups stable while interacting.
-    if (document.visibilityState !== 'visible' || modalRoot.children.length ||
-        (state.server && ['settings', 'console'].includes(state.serverTab)) ||
-        document.activeElement?.matches('input,textarea,select')) return;
+    if (document.visibilityState !== 'visible' || interacting()) return;
     refresh();
   }, 20000);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && !modalRoot.children.length &&
-        !(state.server && ['settings', 'console'].includes(state.serverTab)) &&
+    if (document.visibilityState === 'visible' && !interacting() &&
         Date.now() - (state.lastUpdate?.getTime() || 0) > 30000) refresh();
   });
 }
