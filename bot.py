@@ -45,7 +45,7 @@ try:
 except ImportError:  # /update z 2.7.x instaluje sam bot.py: bot dziala bez panelu i dociaga pliki (heal_files)
     miniapp = None
 
-VERSION = "2.8.1"
+VERSION = "2.9.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 

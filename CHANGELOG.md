@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.9.0 (2026-11)
+
+- **The Mini App speaks your language.** It opens in the language you (or a friend) picked in the bot with `/lang`: Polish, English, Russian or Ukrainian, including its error messages.
+- **"The bot posts new matches in the chat"** is now a switch right under the Dota numbers, not under the whole match history. The panel keeps the history either way.
+- **Progress live in the panel.** After Start, Stop, Restart, Update or Backup the server's badge and a pulsing "operation in progress" line update on their own every few seconds, and the end shows "✓ server: operation - finished".
+- **Why a button is grey** is written above the action buttons (an operation is running, or the instance is off so only Start and Instance ON work).
+- Follows Telegram's light theme; Enter sends in the add-player, setting and console fields; the console opens at its newest lines.
+
 ## 2.8.1 (2026-11)
 
 - **Fix: the Mini App said "Nieprawidlowy podpis Telegrama" in every current Telegram app.** Since Bot API 8.0 Telegram adds a `signature` field to the session data, and the bot's check left it out of the signed text, while Telegram includes every field except `hash` (leaving `signature` out is only for the third-party Ed25519 check). Now it follows core.telegram.org/bots/webapps.

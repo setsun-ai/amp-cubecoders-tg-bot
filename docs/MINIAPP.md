@@ -12,7 +12,7 @@
 - **Network:** HTTP server bound only to `127.0.0.1:8765` by default. Publish HTTPS through **Tailscale Serve** (private) or optionally **Tailscale Funnel** (internet). No direct network port opening.
 - **No extra runtime dependencies:** Python standard library, SQLite and vanilla HTML/CSS/JS.
 
-The Mini App interface is Polish in this initial version; the existing Telegram commands and notifications keep their current language support.
+The Mini App speaks the language each user picked in the bot (`/lang`: Polish, English, Russian or Ukrainian) and follows the Telegram app's light or dark theme.
 
 This is a mobile **companion to AMP**, not a clone of every CubeCoders tab. AMP's full file manager, schedules, restore wizard, instance creation, mod installation and live console stream remain available through the original AMP panel / Telegram bot where implemented. The Mini App console shows recent updates, not a continuous WebSocket stream.
 
