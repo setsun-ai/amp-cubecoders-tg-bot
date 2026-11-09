@@ -195,23 +195,34 @@ def test_selftest_runs(capsys, monkeypatch, env):
 
 
 def test_install_release_tests_and_swaps(tmp_path, monkeypatch, env):
-    import pathlib
-    source = pathlib.Path(bot.__file__).read_bytes()
+    """The multi-file release is tested offline with every release asset."""
+    from pathlib import Path
+
+    root = Path(bot.__file__).resolve().parent
+    files = {name: (root / name).read_bytes() for name in bot.miniapp.RELEASE_FILES}
     target = tmp_path / "opt" / "bot.py"
     target.parent.mkdir()
     target.write_bytes(b"# stara wersja\n")
     monkeypatch.setattr(bot, "BOT_PATH", str(target))
     monkeypatch.setenv("AMP_INSTANCES", str(env.root))
 
-    monkeypatch.setattr(bot, "github_get", lambda url, timeout=20: b"to nie jest python (")
-    ok, out = bot.install_release("v9.9.9")
-    assert not ok and target.read_bytes() == b"# stara wersja\n"
+    broken = True
 
-    monkeypatch.setattr(bot, "github_get", lambda url, timeout=20: source)
+    def offline_download(_repo, _tag, name):
+        return b"to nie jest python (" if broken and name == "bot.py" else files[name]
+
+    monkeypatch.setattr(bot.miniapp, "download_release_file", offline_download)
+    ok, out = bot.install_release("v9.9.9")
+    assert not ok, out
+    assert target.read_bytes() == b"# stara wersja\n"
+    assert not (target.parent / "web" / "index.html").exists()
+
+    broken = False
     ok, out = bot.install_release("v9.9.9")
     assert ok, out
-    assert target.read_bytes() == source
-    assert (tmp_path / "opt" / "bot.py.bak").read_bytes() == b"# stara wersja\n"
+    for name, content in files.items():
+        assert (target.parent / name).read_bytes() == content
+    assert (target.parent / ".miniapp-previous" / "bot.py").read_bytes() == b"# stara wersja\n"
 
 
 def test_update_command_sets_restart(monkeypatch, env):

@@ -33,6 +33,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import miniapp
 import time
 import urllib.error
 import urllib.parse
@@ -40,7 +41,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-VERSION = "2.7.0"
+VERSION = "2.8.0"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -1605,6 +1606,7 @@ def open_db(readonly=False):
     # sesje niezamkniete przy poprzednim wylaczeniu bota
     db.execute("UPDATE sessions SET note='botrestart' WHERE left IS NULL AND note IS NULL")
     db.commit()
+    miniapp.ensure_schema(db)
     return db
 
 
@@ -3935,6 +3937,7 @@ class DotaWatcher:
             try:
                 data = opendota("constants/heroes")
                 self.heroes = {str(k): v.get("localized_name", "?") for k, v in data.items()}
+                miniapp.store_heroes(self.db, data)
                 self.heroes_at = time.time()
             except Exception as e:
                 log(f"OpenDota heroes: {e}")
@@ -3961,6 +3964,9 @@ class DotaWatcher:
             except Exception as e:
                 log(f"OpenDota {account}: {e}")
                 continue
+            miniapp.store_recent_matches(self.db, account, matches)
+            if matches and not self.heroes:
+                self.hero_names()
             self.db.execute("UPDATE dota SET matches_at=?, public=? WHERE account_id=?",
                             (int(now), 1 if matches else 0, account))
             self.db.commit()
@@ -3971,7 +3977,8 @@ class DotaWatcher:
             rank = dota_rank({"rank_tier": row[0]}) if row and row[0] else ""
             heroes = self.hero_names()
             for m in new[-5:]:  # po dlugiej przerwie bota - tylko kilka ostatnich
-                send(dota_match_text(name, m, heroes, rank))
+                if miniapp.dota_notifications_enabled(self.db):
+                    send(dota_match_text(name, m, heroes, rank))
             self.db.execute("UPDATE dota SET last_match=? WHERE account_id=?", (new[-1]["match_id"], account))
             self.db.commit()
 
@@ -4092,6 +4099,9 @@ def set_menu(chat_id, commands=None):
     commands = json.dumps([{"command": c, "description": t("c_" + c, lang)} for c, _ in commands or MENU_COMMANDS])
     try:
         tg_api("setMyCommands", {"commands": commands, "scope": json.dumps({"type": "chat", "chat_id": chat_id})})
+        if miniapp.public_url():
+            tg_api("setChatMenuButton", {"chat_id": chat_id, "menu_button": json.dumps({
+                "type": "web_app", "text": "📱 Panel", "web_app": {"url": miniapp.public_url()}})})
     except Exception as e:
         log(f"setMyCommands: {getattr(e, 'code', type(e).__name__)}")
 
@@ -4134,18 +4144,8 @@ def latest_release():
 
 
 def install_release(tag):
-    """Pobiera bot.py z wydania, testuje i podmienia. Zwraca (ok, komunikat)."""
-    code = github_get(f"https://raw.githubusercontent.com/{GITHUB_REPO}/{tag}/bot.py", timeout=30)
-    new = BOT_PATH + ".new"
-    with open(new, "wb") as f:
-        f.write(code)
-    r = subprocess.run([sys.executable, new, "--selftest"], capture_output=True, text=True, timeout=60)
-    if r.returncode != 0:
-        os.remove(new)
-        return False, (r.stdout + r.stderr).strip()[-800:]
-    shutil.copy2(BOT_PATH, BOT_PATH + ".bak")
-    os.replace(new, BOT_PATH)
-    return True, r.stdout.strip()
+    """All release files must pass --selftest together before replacing any files."""
+    return miniapp.install_release(tag, GITHUB_REPO, BOT_PATH)
 
 
 def selftest():
@@ -4164,6 +4164,9 @@ def selftest():
         help_text(lang)
         help_text(lang, FRIEND_COMMANDS)
         fmt_duration(3700, lang)
+    for asset in ("index.html", "app.js", "style.css"):
+        if not (miniapp.WEB_DIR / asset).is_file():
+            raise SystemExit(f"Brak Mini App: {asset}")
     print(f"OK {VERSION}")
 
 
@@ -4522,6 +4525,7 @@ class Commands:
                         "matches_at, public) VALUES (?,?,?,?,?,?,?,?)",
                         (account, name, last, now, profile.get("rank_tier"), now, now, 1 if matches else 0))
         self.db.commit()
+        miniapp.store_recent_matches(self.db, account, matches)
         when = ts(max(m.get("start_time", 0) for m in matches)) if matches else t("dota_never", lang)
         send(t("dota_added", lang, name=esc(name), rank=esc(dota_rank(profile, lang)), last=when), chat)
         if not matches:
@@ -4562,6 +4566,7 @@ class Commands:
             acc = data[3:]
             row = self.db.execute("SELECT name FROM dota WHERE account_id=?", (acc,)).fetchone()
             self.db.execute("DELETE FROM dota WHERE account_id=?", (acc,))
+            self.db.execute("DELETE FROM mini_dota_matches WHERE account_id=?", (acc,))
             self.db.commit()
             lang = lang_for(chat)
             text, markup = self.dota_view(lang)
@@ -5665,11 +5670,10 @@ class Commands:
         self.restart = True
 
     def rollback(self, chat, lang):
-        bak = BOT_PATH + ".bak"
-        if not os.path.exists(bak):
-            send(t("rb_none", lang), chat)
+        ok, note = miniapp.rollback_release(BOT_PATH)
+        if not ok:
+            send(t("rb_none", lang) + "\n" + esc(note), chat)
             return
-        os.replace(bak, BOT_PATH)
         meta_set(self.db, "updated_from", VERSION)
         send(t("rb_restart", lang), chat)
         self.restart = True
@@ -5688,6 +5692,12 @@ def run():
     commands.watcher = amp_watch
     updates = UpdateMonitor(commands.amp, db)
     dota = DotaWatcher(db)
+    mini_ui = miniapp.MiniAppServer(sys.modules[__name__], commands, dota)
+    try:
+        mini_ui.start()  # opt-in: MINIAPP_URL must be configured
+    except Exception as e:
+        log(f"Mini App not started: {type(e).__name__}: {e}")
+        mini_ui = None
     mods = ModWatcher(db)
     games = GameWatcher(db, commands.amp, amp_watch, instances)
     tunnels = TunnelWatcher(db, commands.amp, instances)
@@ -5697,6 +5707,8 @@ def run():
     log(f"Start {VERSION}, katalog instancji: {INSTANCES_DIR}, admini: {sorted(ADMINS) or 'brak'}")
     while True:
         now = time.time()
+        if mini_ui is not None:
+            mini_ui.drain()
         if now - last_scan >= RESCAN_SECONDS:
             for d in sorted(glob.glob(os.path.join(INSTANCES_DIR, "*", ""))):
                 name = os.path.basename(os.path.normpath(d))
