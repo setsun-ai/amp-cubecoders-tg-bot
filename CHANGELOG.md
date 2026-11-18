@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.9.2 (2026-11)
+
+- **Fix: a game whose AMP join/leave rule names the player in more than one alternative was "not tracked".** AMP writes these rules for .NET, which lets `(?<username>...)` appear in every alternative; Python's `re` refused the whole rule ("redefinition of group name"), so the bot showed the instance as untracked and logged the error every 30 s. The bot now numbers the groups when it translates the rule and takes whichever one matched.
+
 ## 2.9.1 (2026-11)
 
 - **Fix: on a slow connection every notification came two or three times.** When Telegram took more than 10 s to answer, the bot sent the same message again, although Telegram had already received it. Now the bot waits up to 30 s and repeats a message only when it surely did not arrive: no connection, or Telegram answered 429/5xx. After a timeout while waiting for the answer it gives up instead of sending a duplicate.

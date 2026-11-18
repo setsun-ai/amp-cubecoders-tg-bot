@@ -2329,3 +2329,22 @@ def test_send_gives_up_on_rejected_message(monkeypatch):
     monkeypatch.setattr(bot, "tg_api", _api_failing_with(errors, calls))
     assert bot.send("hej", 1) is None
     assert calls == ["sendMessage"]
+
+
+def test_amp_regex_with_repeated_group_name(env):
+    # .NET pozwala nazwac grupe tak samo w kazdej alternatywie; Python re nie - instancja byla "brak"
+    d = env.root / "Terraria02"
+    (d / "AMP_Logs").mkdir(parents=True)
+    (d / "GenericModule.kvp").write_text("\n".join([
+        "App.DisplayName=Terraria",
+        r"Console.UserJoinRegex=^(?<username>.+?) \(\d+\.\d+\.\d+\.\d+:\d+\) has joined\.$|"
+        r"^(?<username>.+?) has joined\.$",
+        r"Console.UserLeaveRegex=^(?<username>.+?) has left\.$|^(?<username>.+?) was kicked",
+    ]) + "\n", encoding="utf-8")
+    (d / "AMP_Logs" / "AMPLOG_1.log").write_text("", encoding="utf-8")
+    env.inst["Terraria02"] = inst = bot.Instance("Terraria02", str(d) + "/", env.db, start_at_end=False)
+    assert (inst.status, inst.game) == ("ok", "Terraria")
+    env.write("Terraria02", "Bob (10.0.0.5:7777) has joined.", "Carol has joined.")
+    assert set(inst.online) == {"bob", "carol"}
+    env.write("Terraria02", "Bob was kicked for spam")
+    assert set(inst.online) == {"carol"}

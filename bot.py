@@ -23,6 +23,7 @@ import errno
 import glob
 import html
 import ipaddress
+import itertools
 import json
 import os
 import re
@@ -45,7 +46,7 @@ try:
 except ImportError:  # /update z 2.7.x instaluje sam bot.py: bot dziala bez panelu i dociaga pliki (heal_files)
     miniapp = None
 
-VERSION = "2.9.1"
+VERSION = "2.9.2"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -1285,11 +1286,29 @@ def read_kvp(path):
     return out
 
 
+DOTNET_GROUP = re.compile(r"\(\?<(?![=!])(\w+)>")
+GROUP_NUMBER = re.compile(r"__\d+$")
+
+
 def dotnet_regex(pattern):
-    """AMP pisze regexy w skladni .NET: (?<nazwa>...) -> w Pythonie (?P<nazwa>...)."""
+    """
+    AMP pisze regexy w skladni .NET: (?<nazwa>...) -> w Pythonie (?P<nazwa__N>...), N = numer grupy.
+    .NET pozwala uzyc tej samej nazwy w kilku alternatywach, Python nie; amp_groups() zdejmuje numery.
+    """
     if not pattern:
         return None
-    return re.compile(re.sub(r"\(\?<(?![=!])", "(?P<", pattern))
+    n = itertools.count(1)
+    return re.compile(DOTNET_GROUP.sub(lambda m: f"(?P<{m.group(1)}__{next(n)}>", pattern))
+
+
+def amp_groups(m):
+    """Grupy dopasowania regexa z dotnet_regex() pod nazwami z AMP (z powtorzonej nazwy - ta, ktora cos zlapala)."""
+    out = {}
+    for name, value in m.groupdict().items():
+        name = GROUP_NUMBER.sub("", name)
+        if out.get(name) is None:
+            out[name] = value
+    return out
 
 
 def public_ip(addr):
@@ -1320,13 +1339,13 @@ class GenericRules:
         if self.join_re:
             m = self.join_re.search(line)
             if m:
-                g = m.groupdict()
+                g = amp_groups(m)
                 inst.on_join(g.get("username"), userid=g.get("userid"))
                 return
         if self.leave_re:
             m = self.leave_re.search(line)
             if m:
-                g = m.groupdict()
+                g = amp_groups(m)
                 inst.on_leave(name=g.get("username"), userid=g.get("userid"))
 
 
@@ -1356,7 +1375,7 @@ class ValheimRules(GenericRules):
         if self.join_re:
             m = self.join_re.search(line)
             if m:
-                g = m.groupdict()
+                g = amp_groups(m)
                 name = g.get("username")
                 if g.get("userid") in ("0", None):  # ZDOID 0:0 = smierc postaci
                     if inst.is_online(name):
@@ -1371,7 +1390,7 @@ class ValheimRules(GenericRules):
         if self.leave_re:
             m = self.leave_re.search(line)
             if m:
-                inst.on_leave(userid=m.groupdict().get("userid"))
+                inst.on_leave(userid=amp_groups(m).get("userid"))
 
 
 class MinecraftRules:
