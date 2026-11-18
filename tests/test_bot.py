@@ -2276,3 +2276,56 @@ def test_rollback_without_mini_app_files_uses_the_old_backup(ui, tmp_path, monke
     monkeypatch.setattr(bot, "BOT_PATH", str(tmp_path / "bot.py"))
     ui.c.rollback(1, "pl")
     assert (tmp_path / "bot.py").read_text() == "old" and ui.c.restart
+
+
+def _api_failing_with(errors, calls):
+    """tg_api, ktore kolejno rzuca bledy z listy, a potem odpowiada jak Telegram."""
+    def api(method, params=None, timeout=10, token=None):
+        calls.append(method)
+        if errors:
+            raise errors.pop(0)
+        return {"result": {"message_id": 7}}
+    return api
+
+
+def test_send_does_not_resend_when_reply_timed_out(monkeypatch):
+    # Telegram dostal wiadomosc, tylko odpowiedz nie zdazyla wrocic: ponowka = duplikat na czacie
+    calls = []
+    monkeypatch.setattr(bot, "TOKEN", "t")
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    monkeypatch.setattr(bot, "tg_api", _api_failing_with([TimeoutError("timed out")], calls))
+    assert bot.send("hej", 1) is None
+    assert calls == ["sendMessage"]
+
+
+def test_send_retries_when_message_never_left(monkeypatch):
+    # brak polaczenia (DNS, connection refused) - wiadomosc na pewno nie dotarla, ponowka jest bezpieczna
+    calls = []
+    monkeypatch.setattr(bot, "TOKEN", "t")
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    errors = [bot.urllib.error.URLError(OSError("Name or service not known"))]
+    monkeypatch.setattr(bot, "tg_api", _api_failing_with(errors, calls))
+    assert bot.send("hej", 1) == 7
+    assert calls == ["sendMessage", "sendMessage"]
+
+
+@pytest.mark.parametrize("code", [429, 502])
+def test_send_retries_when_telegram_did_not_accept(code, monkeypatch):
+    calls = []
+    monkeypatch.setattr(bot, "TOKEN", "t")
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    errors = [bot.urllib.error.HTTPError("u", code, "busy", {}, None)]
+    monkeypatch.setattr(bot, "tg_api", _api_failing_with(errors, calls))
+    assert bot.send("hej", 1) == 7
+    assert calls == ["sendMessage", "sendMessage"]
+
+
+def test_send_gives_up_on_rejected_message(monkeypatch):
+    # 400 (np. zly HTML) - to samo zapytanie znow zostanie odrzucone
+    calls = []
+    monkeypatch.setattr(bot, "TOKEN", "t")
+    monkeypatch.setattr(bot.time, "sleep", lambda s: None)
+    errors = [bot.urllib.error.HTTPError("u", 400, "Bad Request", {}, None)]
+    monkeypatch.setattr(bot, "tg_api", _api_failing_with(errors, calls))
+    assert bot.send("hej", 1) is None
+    assert calls == ["sendMessage"]

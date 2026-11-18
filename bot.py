@@ -45,7 +45,7 @@ try:
 except ImportError:  # /update z 2.7.x instaluje sam bot.py: bot dziala bez panelu i dociaga pliki (heal_files)
     miniapp = None
 
-VERSION = "2.9.0"
+VERSION = "2.9.1"
 ENV_FILE = "/etc/amp-tg-bot.env"
 BOT_PATH = os.path.abspath(__file__)
 
@@ -1250,10 +1250,24 @@ def send(text, chat_id=None, markup=None):
     token = BOT["token"] or TOKEN  # bot, ktory wlasnie odpowiada (do admina: glowny, patrz wyzej)
     for attempt in range(3):
         try:
-            return (tg_api("sendMessage", params, token=token).get("result") or {}).get("message_id")
+            return (tg_api("sendMessage", params, timeout=30, token=token).get("result") or {}).get("message_id")
         except Exception as e:  # nie logujemy URL-a, bo zawiera token
             log(f"Blad Telegrama ({getattr(e, 'code', type(e).__name__)}), proba {attempt + 1}/3")
+            if not send_never_arrived(e):
+                return None
             time.sleep(3 * (attempt + 1))
+
+
+def send_never_arrived(e):
+    """
+    Czy wiadomosc na pewno nie trafila na czat (wtedy ponowka nie zrobi duplikatu).
+    urllib owija w URLError bledy sprzed wyslania zapytania (DNS, polaczenie, TLS); HTTPError to odpowiedz
+    Telegrama: 429 i 5xx - nie przyjal, 4xx - odrzuci tak samo. Goly timeout przy czekaniu na odpowiedz
+    znaczy, ze zapytanie juz poszlo i wiadomosc zwykle dotarla.
+    """
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code == 429 or e.code >= 500
+    return isinstance(e, urllib.error.URLError)
 
 
 # ---------- reguly dla gier ----------

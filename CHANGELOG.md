@@ -1,5 +1,9 @@
 # Changelog
 
+## 2.9.1 (2026-11)
+
+- **Fix: on a slow connection every notification came two or three times.** When Telegram took more than 10 s to answer, the bot sent the same message again, although Telegram had already received it. Now the bot waits up to 30 s and repeats a message only when it surely did not arrive: no connection, or Telegram answered 429/5xx. After a timeout while waiting for the answer it gives up instead of sending a duplicate.
+
 ## 2.9.0 (2026-11)
 
 - **The Mini App speaks your language.** It opens in the language you (or a friend) picked in the bot with `/lang`: Polish, English, Russian or Ukrainian, including its error messages.
