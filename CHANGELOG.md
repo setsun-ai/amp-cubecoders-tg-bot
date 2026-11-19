@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.0 (2026-11)
+
+- **The Mini App opens at once.** Every request used to wait in line until the bot's main loop came round to the panel: after two Telegram polls, the AMP checks and, once an hour, OpenDota. Opening the panel cost two such waits (about 4 s, much longer when OpenDota or Telegram was slow). Reads now answer straight away with their own read-only database connection and AMP client; changes still go through the main loop, the single writer.
+- **Dota numbers say what they count.** The pooled "matches in history / win rate" of everyone together (some games from 2024) is gone. Each player shows their record over their last 20 matches and since when ("10–10 in the last 20 · since 11 Oct"), the form of the last 10 and when they last played; at the top: this week's matches (a match two friends played counts once) and how many players played. A player with hidden matches gets the Dota setting to turn on.
+- **A readable match list.** Matches are grouped by day; each shows the player in bold next to the hero, the time, the mode (Ranked All Pick, Turbo…) and length, the result as a coloured edge and K/D/A. Players are sorted by who played last. The header says the data comes from OpenDota every N minutes and when it was last checked.
+
 ## 2.9.2 (2026-11)
 
 - **Fix: a game whose AMP join/leave rule names the player in more than one alternative was "not tracked".** AMP writes these rules for .NET, which lets `(?<username>...)` appear in every alternative; Python's `re` refused the whole rule ("redefinition of group name"), so the bot showed the instance as untracked and logged the error every 30 s. The bot now numbers the groups when it translates the rule and takes whichever one matched.
