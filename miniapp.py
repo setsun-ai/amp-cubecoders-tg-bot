@@ -164,6 +164,19 @@ def dota_notifications_enabled(db):
     return row is None or row[0] != "0"
 
 
+RECORD_GAMES, FORM_GAMES = 20, 10  # a player's record: their newest 20 stored matches; form: the newest 10
+WEEK = 7 * 86400
+
+
+def player_record(results):
+    """`results`: (start_time, won) of one player's stored matches, newest first. Win counts are only ever about a
+    stated sample - these games, since that date - never a mix of players or of years."""
+    sample = results[:RECORD_GAMES]
+    return {"games": len(sample), "wins": sum(1 for _, won in sample if won),
+            "since": sample[-1][0] if sample else None, "last": sample[0][0] if sample else None,
+            "form": [bool(won) for _, won in sample[:FORM_GAMES]]}
+
+
 def serialize_match(m, account_id, name, hero):
     # Keep frontend data stable despite OpenDota's nullable/missing fields.
     return {"account_id": account_id, "player_name": name, "match_id": m.get("match_id"),
@@ -496,14 +509,22 @@ class MiniAppServer:
                                                (hero_name, hero_slug) if hero_name else None))
             except (ValueError, TypeError):
                 continue
-        totals = {p["account_id"]: {"wins": 0, "total": 0} for p in players}
-        for m in matches:
-            t = totals[m["account_id"]]
-            t["total"] += 1
-            t["wins"] += int(m["win"])
+        results = {p["account_id"]: [] for p in players}
+        for acc, start, won in db.execute("SELECT account_id, start_time, won FROM mini_dota_matches "
+                                          "ORDER BY start_time DESC, match_id DESC"):
+            if acc in results:
+                results[acc].append((start, won))
+        for p in players:
+            p["stats"] = player_record(results[p["account_id"]])
+        # Two watched friends in one match: one match this week, not two.
+        week_matches, week_players = db.execute(
+            "SELECT COUNT(DISTINCT m.match_id), COUNT(DISTINCT m.account_id) FROM mini_dota_matches m "
+            "JOIN dota d ON d.account_id=m.account_id WHERE m.start_time >= ?", (int(time.time()) - WEEK,)).fetchone()
         heroes = {str(hid): {"name": name, "slug": slug} for hid, name, slug in
                   db.execute("SELECT hero_id, name, slug FROM mini_dota_heroes")}
-        return {"players": players, "matches": matches, "totals": totals, "heroes": heroes,
+        return {"players": players, "matches": matches, "heroes": heroes,
+                "summary": {"week_matches": week_matches, "week_players": week_players},
+                "check_minutes": self.bot.DOTA_CHECK_MINUTES,
                 "notifications": dota_notifications_enabled(db)}
 
     def watch_dota(self, p):

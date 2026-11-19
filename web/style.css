@@ -182,3 +182,24 @@ main { padding: 0 17px; }
 [data-scheme="light"] .modal-scrim { background: #0b0f1666; }
 [data-scheme="light"] .modal { background: var(--panel); border-color: #dde2e9; box-shadow: 0 15px 60px #0003; }
 [data-scheme="light"] .toast { background: #2d3846; border-color: #2d3846; }
+
+/* Dota: compact header, day groups, result as a coloured edge, form dots */
+.hero.compact { padding: 18px 18px; margin-bottom: 12px; }
+.hero.compact h1 { font-size: clamp(22px, 6vw, 28px); margin: 0 0 6px; }
+.day-label { font-size: 11px; font-weight: 750; letter-spacing: .06em; color: var(--muted); margin: 10px 2px 0; }
+.match-list .day-label:first-child { margin-top: 0; }
+.match-list { gap: 7px; }
+.match { padding: 10px 12px; border-left-width: 4px; }
+.match.won { border-left-color: var(--green); } .match.lost { border-left-color: var(--red); }
+.match .hero-portrait { width: 42px; height: 42px; }
+.match-top strong { font-size: 15px; flex-shrink: 0; max-width: 55%; }
+.match-top .muted { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-bottom { font-size: 11.5px; margin-top: 4px; }
+.kda { font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.match-right .badge { padding: 3px 7px; }
+.record { display: flex; align-items: center; gap: 8px; margin-top: 7px; font-size: 11.5px; flex-wrap: wrap; }
+.form { display: flex; gap: 3px; }
+.form i { width: 8px; height: 14px; border-radius: 2px; background: var(--red); }
+.form i.w { background: var(--green); }
+.sub.warn { color: var(--accent); }
+.record span { white-space: nowrap; }

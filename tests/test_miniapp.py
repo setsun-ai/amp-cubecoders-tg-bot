@@ -590,3 +590,44 @@ def test_a_read_uses_its_own_connection_that_cannot_write(fixture, monkeypatch, 
     with server.read_db() as reader, pytest.raises(sqlite3.OperationalError, match="readonly"):
         reader.execute("DELETE FROM dota")
     db.close()
+
+
+def played(match_id, days_ago, won, slot=0):
+    """A recentMatches entry `days_ago` days back, won or lost from slot's side."""
+    return {"match_id": match_id, "hero_id": 1, "start_time": int(time.time() - days_ago * 86400),
+            "player_slot": slot, "radiant_win": won if slot < 128 else not won}
+
+
+def dota_player(server, account_id):
+    data = server.dispatch(main_user(), "GET /api/dota", {})
+    return next(p for p in data["players"] if p["account_id"] == account_id), data["summary"]
+
+
+def test_a_players_record_covers_only_their_last_20_matches_and_says_since_when(fixture):
+    # 25 stored matches, newest first: 5 wins, 15 losses, 5 older wins. The record is the newest 20: 5-15.
+    server, db, _ = fixture
+    matches = [played(1000 - i, days_ago=i, won=i < 5 or i >= 20) for i in range(25)]
+    miniapp.store_recent_matches(db, 123, matches)
+    alice, _ = dota_player(server, 123)
+    assert alice["stats"]["games"] == 20 and alice["stats"]["wins"] == 5
+    assert alice["stats"]["since"] == matches[19]["start_time"]
+    assert alice["stats"]["last"] == matches[0]["start_time"]
+    assert alice["stats"]["form"] == [True] * 5 + [False] * 5  # newest first, last 10
+
+
+def test_the_summary_counts_this_weeks_matches_once_and_who_played(fixture):
+    server, db, _ = fixture
+    db.execute("INSERT INTO dota VALUES(456,'Bob',0,0,30,0,0,1)")
+    db.execute("INSERT INTO dota VALUES(789,'Carol',0,0,30,0,0,1)")
+    miniapp.store_recent_matches(db, 123, [played(1, 1, True), played(2, 3, False), played(3, 20, True)])
+    miniapp.store_recent_matches(db, 456, [played(1, 1, False, slot=130)])  # the same match as Alice, other team
+    miniapp.store_recent_matches(db, 789, [played(4, 40, True)])
+    _, summary = dota_player(server, 123)
+    assert summary == {"week_matches": 2, "week_players": 2}
+    assert server.dispatch(main_user(), "GET /api/dota", {})["check_minutes"] == 60  # the page says how often
+
+
+def test_a_player_without_matches_has_an_empty_record(fixture):
+    server, _, _ = fixture
+    alice, _ = dota_player(server, 123)
+    assert alice["stats"] == {"games": 0, "wins": 0, "since": None, "last": None, "form": []}

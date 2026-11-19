@@ -17,10 +17,8 @@ const STRINGS = {
   "offline": ["Brak połączenia z panelem", "No connection to the panel", "Нет связи с панелью", "Немає зв'язку з панеллю"],
   "http_error": ["Błąd HTTP {status}", "HTTP error {status}", "Ошибка HTTP {status}", "Помилка HTTP {status}"],
   "dota_title": ["Dota 2 · Obserwowani", "Dota 2 · Watched", "Dota 2 · Отслеживаемые", "Dota 2 · Відстежувані"],
-  "dota_lead": ["Ostatnie mecze, historia bohaterów i wyniki. Bez przewijania powiadomień Telegrama.", "Recent matches, hero history and results, without scrolling through Telegram notifications.", "Последние матчи, история героев и результаты — без прокрутки уведомлений Telegram.", "Останні матчі, історія героїв і результати — без гортання сповіщень Telegram."],
+  "dota_lead": ["Mecze obserwowanych graczy z OpenDota. Bot sprawdza co {n} min, ostatnio {ago}.", "Watched players' matches from OpenDota. The bot checks every {n} min, last {ago}.", "Матчи отслеживаемых игроков из OpenDota. Бот проверяет каждые {n} мин, последний раз {ago}.", "Матчі відстежуваних гравців з OpenDota. Бот перевіряє кожні {n} хв, востаннє {ago}."],
   "st_watched": ["Obserwowani", "Watched", "Отслеживаются", "Відстежуються"],
-  "st_matches": ["Mecze w historii", "Matches in history", "Матчей в истории", "Матчів в історії"],
-  "st_winrate": ["Win rate", "Win rate", "Винрейт", "Вінрейт"],
   "watched_players": ["Obserwowani gracze", "Watched players", "Отслеживаемые игроки", "Відстежувані гравці"],
   "add": ["+ Dodaj", "+ Add", "+ Добавить", "+ Додати"],
   "nobody_watched": ["Nikogo jeszcze nie obserwujesz", "You aren't watching anyone yet", "Вы пока никого не отслеживаете", "Ви ще нікого не відстежуєте"],
@@ -38,12 +36,7 @@ const STRINGS = {
   "notif_on": ["🔔 Włączone", "🔔 On", "🔔 Включены", "🔔 Увімкнено"],
   "notif_off": ["🔕 Wyłączone", "🔕 Off", "🔕 Выключены", "🔕 Вимкнено"],
   "notif_changed": ["Zmieniono powiadomienia", "Notifications changed", "Уведомления изменены", "Сповіщення змінено"],
-  "pct_wins": ["{pct}% wygranych", "{pct}% won", "{pct}% побед", "{pct}% перемог"],
-  "no_matches": ["Brak meczów", "No matches", "Нет матчей", "Немає матчів"],
-  "no_public": ["Brak publicznych meczów", "No public matches", "Нет публичных матчей", "Немає публічних матчів"],
   "matches_btn": ["Mecze", "Matches", "Матчи", "Матчі"],
-  "victory": ["ZWYCIĘSTWO", "VICTORY", "ПОБЕДА", "ПЕРЕМОГА"],
-  "defeat": ["PORAŻKA", "DEFEAT", "ПОРАЖЕНИЕ", "ПОРАЗКА"],
   "watch_title": ["Obserwuj gracza", "Watch a player", "Отслеживать игрока", "Відстежувати гравця"],
   "watch_hint": ["Friend ID (Steam32) albo link do profilu Steam, Dotabuff lub OpenDota.", "Friend ID (Steam32) or a Steam, Dotabuff or OpenDota profile link.", "Friend ID (Steam32) или ссылка на профиль Steam, Dotabuff или OpenDota.", "Friend ID (Steam32) або посилання на профіль Steam, Dotabuff чи OpenDota."],
   "example_id": ["Np. 123456789", "E.g. 123456789", "Напр. 123456789", "Напр. 123456789"],
@@ -183,7 +176,14 @@ const STRINGS = {
   "err_items_unavailable": ["Nie można pobrać listy przedmiotów", "Can't fetch the item list", "Не удаётся получить список предметов", "Не вдається отримати список предметів"],
   "err_bad_match_id": ["Nieprawidłowe ID meczu", "Invalid match ID", "Неверный ID матча", "Невірний ID матчу"],
   "err_opendota_too_big": ["Odpowiedź OpenDota jest za duża", "The OpenDota reply is too big", "Ответ OpenDota слишком большой", "Відповідь OpenDota завелика"],
-  "err_opendota_unavailable": ["OpenDota jest obecnie niedostępna", "OpenDota is unavailable right now", "OpenDota сейчас недоступна", "OpenDota зараз недоступна"]
+  "err_opendota_unavailable": ["OpenDota jest obecnie niedostępna", "OpenDota is unavailable right now", "OpenDota сейчас недоступна", "OpenDota зараз недоступна"],
+  "st_week_matches": ["Mecze · 7 dni", "Matches · 7 days", "Матчи · 7 дней", "Матчі · 7 днів"],
+  "st_week_players": ["Grało · 7 dni", "Played · 7 days", "Играли · 7 дней", "Грали · 7 днів"],
+  "record": ["{w}–{l} w ostatnich {n} · od {since}", "{w}–{l} in the last {n} · since {since}", "{w}–{l} за последние {n} · с {since}", "{w}–{l} за останні {n} · з {since}"],
+  "form_hint": ["Forma: ostatnie mecze, najnowszy z prawej", "Form: latest matches, newest on the right", "Форма: последние матчи, новейший справа", "Форма: останні матчі, найновіший праворуч"],
+  "last_played": ["grał {ago}", "played {ago}", "играл {ago}", "грав {ago}"],
+  "matches_hidden": ["Mecze ukryte: w Dota 2 włącz „Expose Public Match Data”", "Matches hidden: turn on “Expose Public Match Data” in Dota 2", "Матчи скрыты: включите в Dota 2 «Expose Public Match Data»", "Матчі приховані: увімкніть у Dota 2 «Expose Public Match Data»"],
+  "no_matches_yet": ["Jeszcze bez meczów", "No matches yet", "Пока без матчей", "Поки без матчів"]
 };
 const LANG_ORDER = ['pl', 'en', 'ru', 'uk'];
 const LOCALES = { pl: 'pl-PL', en: 'en-GB', ru: 'ru-RU', uk: 'uk-UA' };
@@ -269,6 +269,34 @@ function dateLabel(seconds) {
   if (!seconds) return t('no_date');
   return new Intl.DateTimeFormat(locale(), { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }).format(new Date(seconds * 1000));
 }
+function timeLabel(seconds) {
+  return new Intl.DateTimeFormat(locale(), { hour: '2-digit', minute: '2-digit' }).format(new Date(seconds * 1000));
+}
+function shortDate(seconds) {
+  const d = new Date(seconds * 1000);
+  const year = d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {};
+  return new Intl.DateTimeFormat(locale(), { day: 'numeric', month: 'short', ...year }).format(d);
+}
+// "5 min ago", "yesterday", "2 months ago" - in the panel's language, no texts of our own.
+function ago(seconds) {
+  const rtf = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
+  const s = seconds - Date.now() / 1000;
+  for (const [unit, size] of [['year', 31536000], ['month', 2592000], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
+    if (Math.abs(s) >= size) return rtf.format(Math.round(s / size), unit);
+  }
+  return rtf.format(0, 'minute');
+}
+// Day headers of the match list: "today", "yesterday", then "Mon, 17 Nov".
+function dayLabel(seconds) {
+  if (!seconds) return t('no_date');
+  const day = new Date(seconds * 1000); day.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const back = Math.round((today - day) / 86400000);
+  const text = back < 2 ? new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' }).format(-back, 'day')
+    : new Intl.DateTimeFormat(locale(), { weekday: 'short', day: 'numeric', month: 'short',
+      ...(day.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) }).format(day);
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 function duration(seconds) {
   if (!Number.isFinite(Number(seconds))) return '—';
   const x = Math.max(0, Math.round(seconds));
@@ -284,7 +312,7 @@ function rankName(tier) {
 }
 function modeName(m) {
   const names = { 1: 'All Pick', 2: 'Captains Mode', 3: 'Random Draft', 4: 'Single Draft', 22: 'All Pick', 23: 'Turbo' };
-  return `${names[m.game_mode] || t('mode', { n: m.game_mode ?? '?' })}${m.lobby_type === 7 ? ' • Ranked' : ''}`;
+  return `${m.lobby_type === 7 ? 'Ranked ' : ''}${names[m.game_mode] || t('mode', { n: m.game_mode ?? '?' })}`;
 }
 function requestId() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID();
@@ -358,14 +386,16 @@ function empty(title, detail, symbol = '◈') {
   return add(box, el('div', 'symbol', symbol), el('strong', '', title), el('div', '', detail));
 }
 function heroPortrait(m) {
-  const box = el('div', 'hero-portrait', '✦');
-  if (m.hero_slug && /^[a-z0-9_]+$/.test(m.hero_slug)) {
+  // The star only stands in for a missing picture (it used to show on top of every portrait).
+  const box = el('div', 'hero-portrait');
+  if (!m.hero_slug || !/^[a-z0-9_]+$/.test(m.hero_slug)) box.textContent = '✦';
+  else {
     const img = el('img');
     img.alt = m.hero_name || '';
     img.loading = 'lazy';
     img.referrerPolicy = 'no-referrer';
     img.src = `https://cdn.cloudflare.steamstatic.com/apps/dota2/images/dota_react/heroes/${m.hero_slug}.png`;
-    img.addEventListener('error', () => img.remove());
+    img.addEventListener('error', () => { img.remove(); box.textContent = '✦'; });
     box.append(img);
   }
   return box;
@@ -390,26 +420,28 @@ function render() {
 
 /* --- Dota 2 --- */
 function renderDota() {
-  const data = state.dota || { players: [], matches: [], totals: {}, notifications: true };
-  const hero = el('div', 'hero');
-  add(hero, el('div', 'section-kicker', 'MATCH INTELLIGENCE'), el('h1', '', t('dota_title')),
-    el('p', '', t('dota_lead')));
+  const data = state.dota || { players: [], matches: [], notifications: true };
+  // Where the numbers come from and how fresh they are, instead of a slogan.
+  const checked = Math.max(0, ...data.players.map(p => p.matches_at || 0));
+  const hero = el('div', 'hero compact');
+  add(hero, el('h1', '', t('dota_title')),
+    el('p', '', t('dota_lead', { n: data.check_minutes ?? '?', ago: checked ? ago(checked) : '—' })));
   root.append(hero);
-  const summaries = data.matches || [];
-  const wins = summaries.filter(x => x.win).length;
-  const stats = el('div', 'stats-row');
-  add(stats, stat(data.players.length, t('st_watched')),
-    stat(summaries.length, t('st_matches')),
-    stat(summaries.length ? `${Math.round(100 * wins / summaries.length)}%` : '—', t('st_winrate'), 'green'));
-  root.append(stats, notificationSwitch(data));
+  // No win rate here: a percentage over several people and several years says nothing about anyone.
+  const week = data.summary || {};
+  root.append(add(el('div', 'stats-row'), stat(data.players.length, t('st_watched')),
+    stat(week.week_matches ?? 0, t('st_week_matches')),
+    stat(`${week.week_players ?? 0}/${data.players.length}`, t('st_week_players'), 'green')));
   section(root, t('watched_players'), t('add'), showWatchModal);
   const profiles = el('div', 'profile-list');
   if (!data.players.length) profiles.append(empty(t('nobody_watched'), t('nobody_watched_hint'), '🎯'));
-  for (const p of data.players) profiles.append(playerCard(p, data.totals?.[p.account_id]));
+  // Who played most recently first.
+  const byLast = [...data.players].sort((a, b) => (b.stats?.last || 0) - (a.stats?.last || 0));
+  for (const p of byLast) profiles.append(playerCard(p));
   root.append(profiles);
   section(root, t('match_history'), t('refresh'), () => refresh(true));
   const filters = el('div', 'filters');
-  const players = [{ value: 'all', name: t('all_players') }, ...data.players.map(p => ({ value: String(p.account_id), name: p.name }))];
+  const players = [{ value: 'all', name: t('all_players') }, ...byLast.map(p => ({ value: String(p.account_id), name: p.name }))];
   for (const p of players) filters.append(btn(p.name, () => { state.player = p.value; render(); },
     'chip' + (state.player === p.value ? ' active' : '')));
   root.append(filters);
@@ -419,12 +451,17 @@ function renderDota() {
       'chip' + (state.outcome === value ? ' active' : '')));
   }
   root.append(results);
-  const visible = summaries.filter(m => (state.player === 'all' || String(m.account_id) === state.player)
+  const visible = (data.matches || []).filter(m => (state.player === 'all' || String(m.account_id) === state.player)
     && (state.outcome === 'all' || (state.outcome === 'win') === m.win));
   const matches = el('div', 'match-list');
   if (!visible.length) matches.append(empty(t('no_matches_filter'), t('no_matches_hint'), '▤'));
-  for (const m of visible.slice(0, 250)) matches.append(matchCard(m));
-  root.append(matches);
+  let day = null;
+  for (const m of visible.slice(0, 250)) {
+    const label = dayLabel(m.start_time);
+    if (label !== day) { matches.append(el('div', 'day-label', label)); day = label; }
+    matches.append(matchCard(m));
+  }
+  root.append(matches, notificationSwitch(data));
 }
 // Right under the numbers: whether the bot also posts each new match in the chat (the panel keeps them either way).
 function notificationSwitch(data) {
@@ -438,27 +475,37 @@ function notificationSwitch(data) {
   turn.setAttribute('aria-pressed', String(Boolean(data.notifications)));
   return add(toggle, label, turn);
 }
-function playerCard(p, total = {}) {
+function playerCard(p) {
+  const record = p.stats || { games: 0, wins: 0, form: [] };
   const box = el('div', 'profile');
   const avatar = el('div', 'avatar', (p.name || '?').slice(0, 1).toUpperCase());
   const center = el('div', 'content');
-  const wr = total.total ? t('pct_wins', { pct: Math.round(total.wins / total.total * 100) }) : t('no_matches');
-  add(center, el('strong', '', p.name), el('div', 'sub', `${rankName(p.rank_tier)} • ${wr}${p.public === 0 ? ` • ${t('no_public')}` : ''}`));
+  const facts = [rankName(p.rank_tier)];
+  if (record.last) facts.push(t('last_played', { ago: ago(record.last) }));
+  add(center, el('strong', '', p.name), el('div', 'sub', facts.join(' • ')));
+  if (record.games) {
+    const form = el('div', 'form'); form.title = t('form_hint');
+    for (const won of [...record.form].reverse()) form.append(el('i', won ? 'w' : 'l'));
+    center.append(add(el('div', 'record'), form, el('span', '', t('record', {
+      w: record.wins, l: record.games - record.wins, n: record.games, since: shortDate(record.since) }))));
+  }
+  if (p.public === 0) center.append(el('div', 'sub warn', t('matches_hidden')));
+  else if (!record.games) center.append(el('div', 'sub', t('no_matches_yet')));
   const actions = el('div', 'profile-actions');
-  add(actions, btn(t('matches_btn'), () => { state.player = String(p.account_id); state.outcome = 'all'; render();
-    document.querySelector('.match-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 'btn small'),
-  btn('✕', () => removePlayer(p), 'ghost'));
+  if (record.games) actions.append(btn(t('matches_btn'), () => { state.player = String(p.account_id); state.outcome = 'all'; render();
+    document.querySelector('.match-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 'btn small'));
+  actions.append(btn('✕', () => removePlayer(p), 'ghost'));
   return add(box, avatar, center, actions);
 }
+// One line who and which hero, one line when, what mode and how long; the result is the colour and the badge.
 function matchCard(m) {
-  const box = el('button', 'match'); box.type = 'button';
+  const box = el('button', `match ${m.win ? 'won' : 'lost'}`); box.type = 'button';
   const content = el('div', 'match-content');
-  add(content, add(el('div', 'match-top'), el('strong', '', m.hero_name)),
-    add(el('div', 'match-bottom'), el('span', '', m.player_name), el('span', '', '·'),
-      el('span', '', dateLabel(m.start_time)), el('span', '', '·'), el('span', '', duration(m.duration))));
+  add(content, add(el('div', 'match-top'), el('strong', '', m.player_name), el('span', 'muted', m.hero_name)),
+    el('div', 'match-bottom', [timeLabel(m.start_time), modeName(m), duration(m.duration)].join(' · ')));
   const right = el('div', 'match-right');
-  add(right, el('span', `badge ${m.win ? 'win' : 'loss'}`, m.win ? t('victory') : t('defeat')),
-    el('span', 'muted', `${m.kills ?? 0}/${m.deaths ?? 0}/${m.assists ?? 0} KDA`));
+  const kda = el('span', 'kda', `${m.kills ?? 0}/${m.deaths ?? 0}/${m.assists ?? 0}`); kda.title = 'K / D / A';
+  add(right, el('span', `badge ${m.win ? 'win' : 'loss'}`, m.win ? t('won') : t('lost')), kda);
   add(box, heroPortrait(m), content, right);
   box.addEventListener('click', () => openMatch(m));
   return box;
@@ -808,7 +855,7 @@ async function refresh(interactive = false) {
       { configured: false, instances: [], error: ampResult.reason?.message || t('amp_conn_lost') };
     if (me.admin) {
       if (dotaResult?.status === 'fulfilled') state.dota = dotaResult.value;
-      else if (!state.dota) state.dota = { players: [], matches: [], totals: {}, notifications: true };
+      else if (!state.dota) state.dota = { players: [], matches: [], notifications: true };
     }
     noteFinished(state.amp.instances || []);
     state.lastUpdate = new Date();
