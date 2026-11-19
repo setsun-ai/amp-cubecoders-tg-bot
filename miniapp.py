@@ -1,11 +1,15 @@
 """Telegram Mini App for amp-cubecoders-tg-bot (stdlib only).
 
-The HTTP listener never accesses the bot's SQLite connection or AMP client.
-Authenticated requests are serialized into the existing bot event loop, keeping
-Telegram buttons and Mini App controls under one writer and one permission model.
+The HTTP listener never touches the bot's SQLite connection or AMP client.
+Reads (GET) are answered on the HTTP thread from a read-only SQLite connection and
+the panel's own AMP client, so opening the panel doesn't wait for the main loop
+(which reaches the queue only between Telegram polls and AMP/OpenDota checks).
+Changes (POST) are serialized into the bot's main loop, keeping Telegram buttons
+and Mini App controls under one writer and one permission model.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -190,9 +194,29 @@ def match_detail_data(raw):
             "players": players}
 
 
+class Serialized:
+    """The panel's own AMP client, shared by its reader threads: it keeps one login session, so one call at a time."""
+
+    def __init__(self, target):
+        self._target, self._lock = target, threading.RLock()
+
+    def __getattr__(self, name):
+        attr = getattr(self._target, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            with self._lock:
+                return attr(*args, **kwargs)
+        return call
+
+
 class MiniAppServer:
-    def __init__(self, bot, commands, dota=None, web_dir=WEB_DIR, port=None):
+    def __init__(self, bot, commands, dota=None, web_dir=WEB_DIR, port=None, read_db=None, web_amp=None):
         self.bot, self.commands, self.dota = bot, commands, dota
+        # For GET requests: a fresh read-only connection per request (SQLite connections are per thread).
+        self.read_db = read_db or (lambda: contextlib.closing(bot.open_db(readonly=True)))
+        self.web_amp = web_amp  # created in start(): Serialized(bot.Amp())
         self.web_dir = Path(web_dir)
         # Read after bot.load_env_file(), including when run outside systemd.
         self.port = int(os.environ.get("MINIAPP_PORT", str(DEFAULT_PORT))) if port is None else int(port)
@@ -210,6 +234,8 @@ class MiniAppServer:
             return False
         if not self.web_dir.joinpath("index.html").is_file():
             raise RuntimeError("Mini App: brak web/index.html")
+        if self.web_amp is None:
+            self.web_amp = Serialized(self.bot.Amp())
         server = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -277,25 +303,15 @@ class MiniAppServer:
                 raise APIError(405, "method_not_allowed")
             tokens = {"main": self.bot.TOKEN, "friends": self.bot.FRIENDS_TOKEN}
             identity = validate_init_data(h.headers.get("X-Telegram-Init-Data", ""), tokens)
-            payload = {}
-            if method == "POST":
-                size = int(h.headers.get("Content-Length", "0"))
-                if size <= 0 or size > 65536 or h.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                    raise APIError(400, "bad_request_data")
-                payload = json.loads(h.rfile.read(size))
-                if not isinstance(payload, dict):
-                    raise APIError(400, "json_object_expected")
-            if method == "GET" and path.path == "/api/dota/items":
-                self.call_main(identity, "authorize_items", {})
-                data = self.fetch_items()
-            elif method == "GET" and re.fullmatch(r"/api/dota/matches/[0-9]+", path.path):
-                # Membership + role must be checked on the main thread first.
-                mid = int(path.path.rsplit("/", 1)[1])
-                self.call_main(identity, "authorize_match", {"match_id": mid})
-                data = self.fetch_match(mid)
-            else:
-                data = self.call_main(identity, method + " " + path.path, payload)
-            self.respond(h, 200, data)
+            if method == "GET":
+                return self.respond(h, 200, self.read(identity, path.path))
+            size = int(h.headers.get("Content-Length", "0"))
+            if size <= 0 or size > 65536 or h.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                raise APIError(400, "bad_request_data")
+            payload = json.loads(h.rfile.read(size))
+            if not isinstance(payload, dict):
+                raise APIError(400, "json_object_expected")
+            self.respond(h, 200, self.call_main(identity, "POST " + path.path, payload))
         except APIError as e:
             self.respond(h, e.status, {"error": e.detail})
         except (json.JSONDecodeError, ValueError):
@@ -303,6 +319,20 @@ class MiniAppServer:
         except Exception as e:
             self.bot.log(f"Mini App request failure: {type(e).__name__}: {str(e)[:120]}")
             self.respond(h, 500, {"error": "panel_error"})
+
+    def read(self, identity, path):
+        """GET on the HTTP thread: own read-only DB connection and AMP client; the same routes and checks as the
+        main loop, which a write can't slip through (the connection refuses writes, POST routes don't match GET)."""
+        with self.read_db() as db:
+            if path == "/api/dota/items":
+                self.dispatch(identity, "authorize_items", {}, db, self.web_amp)
+            elif re.fullmatch(r"/api/dota/matches/[0-9]+", path):
+                mid = int(path.rsplit("/", 1)[1])
+                self.dispatch(identity, "authorize_match", {"match_id": mid}, db, self.web_amp)
+            else:
+                return self.dispatch(identity, "GET " + path, {}, db, self.web_amp)
+        # Upstream fetches happen after the DB connection is closed.
+        return self.fetch_items() if path == "/api/dota/items" else self.fetch_match(mid)
 
     def call_main(self, identity, route, data):
         event = threading.Event()
@@ -335,13 +365,13 @@ class MiniAppServer:
                 job["event"].set()
                 self.jobs.task_done()
 
-    def access(self, identity):
+    def access(self, identity, db):
         uid = identity["id"]
         if uid in self.bot.ADMINS:
             return None  # full access, including Dota.
         if identity["bot_kind"] != "friends" and self.bot.FRIENDS_TOKEN:
             raise APIError(403, "admin_only_bot")
-        friend = self.bot.friend_get(self.commands.db, uid)
+        friend = self.bot.friend_get(db, uid)
         if not friend:
             raise APIError(403, "no_access")
         return set(friend["instances"])
@@ -372,18 +402,21 @@ class MiniAppServer:
         self.replay[key] = (time.time(), result)
         return result
 
-    def dispatch(self, identity, route, payload):
-        scope = self.access(identity)
+    def dispatch(self, identity, route, payload, db=None, amp=None):
+        """Main loop: the bot's own connection and AMP client; reads: those given by read()."""
+        db = self.commands.db if db is None else db
+        amp = self.commands.amp if amp is None else amp
+        scope = self.access(identity, db)
         uid = identity["id"]
         who = identity["user"]
         if route == "GET /api/me":
             return {"id": uid, "name": who.get("first_name") or who.get("username") or "Gracz",
                     "admin": scope is None, "version": self.bot.VERSION, "lang": self.bot.lang_for(uid),
-                    "dota_notifications": dota_notifications_enabled(self.commands.db),
+                    "dota_notifications": dota_notifications_enabled(db),
                     "warn_seconds": self.bot.WARN_SECONDS}
         if route == "GET /api/dota":
             self.admin(scope)
-            return self.get_dota()
+            return self.get_dota(db)
         if route == "POST /api/dota/notifications":
             self.admin(scope)
             value = payload.get("enabled")
@@ -415,7 +448,7 @@ class MiniAppServer:
         if route == "authorize_match":
             self.admin(scope)
             mid = payload["match_id"]
-            exists = self.commands.db.execute(
+            exists = db.execute(
                 "SELECT 1 FROM mini_dota_matches m JOIN dota d "
                 "ON d.account_id=m.account_id WHERE m.match_id=? LIMIT 1", (mid,)
             ).fetchone()
@@ -423,32 +456,31 @@ class MiniAppServer:
                 raise APIError(404, "match_not_watched")
             return {"ok": True}
         if route == "GET /api/amp/instances":
-            return self.amp_instances(scope)
+            return self.amp_instances(scope, amp)
         match = re.fullmatch(r"(GET|POST) /api/amp/instances/([^/]+)/(players|settings|console|action)", route)
         if match:
             method, encoded, item = match.groups()
             name = urllib.parse.unquote(encoded)
             self.scoped_name(scope, name)
             # Verify existence via AMP and never use the user value as an API path/endpoint.
-            inst = self.commands.amp.find(name)
+            inst = amp.find(name)
             if item == "players" and method == "GET":
-                return {"players": self.commands.amp.users(name)}
+                return {"players": amp.users(name)}
             if item == "settings" and method == "GET":
-                return {"groups": self.get_settings(scope, name)}
+                return {"groups": self.get_settings(scope, name, amp)}
             if item == "settings" and method == "POST":
                 return self.operation(identity, payload, lambda: self.write_setting(identity, scope, name, payload))
             if item == "console":
                 self.admin(scope)
                 if method == "GET":
-                    return {"lines": self.commands.amp.console_tail(name, n=60)}
+                    return {"lines": amp.console_tail(name, n=60)}
                 if method == "POST":
                     return self.operation(identity, payload, lambda: self.console(identity, name, payload))
             if item == "action" and method == "POST":
                 return self.operation(identity, payload, lambda: self.amp_action(identity, inst, payload))
         raise APIError(404, "unknown_endpoint")
 
-    def get_dota(self):
-        db = self.commands.db
+    def get_dota(self, db):
         players = [{"account_id": acc, "name": name, "rank_tier": tier, "public": public,
                     "matches_at": matches_at} for acc, name, tier, public, matches_at in
                    db.execute("SELECT account_id,name,rank_tier,public,matches_at FROM dota ORDER BY name")]
@@ -509,22 +541,23 @@ class MiniAppServer:
         self.commands.db.commit()
         return {"removed": account}
 
-    def amp_instances(self, scope):
-        if not self.commands.amp.configured:
+    def amp_instances(self, scope, amp):
+        if not amp.configured:
             return {"configured": False, "instances": []}
-        all_inst = self.commands.amp.instances()
+        all_inst = amp.instances()
         result = []
         for inst in all_inst:
             if scope is not None and inst["name"] not in scope:
                 continue
             state = self.bot.amp_state(inst)[1]
+            # watcher.busy / players_on: single dict lookups, safe from the HTTP thread (at worst a moment stale).
             result.append({**inst, "state_text": state,
                            "busy": self.commands.watcher.busy(inst["name"]) if self.commands.watcher else None,
                            "players": self.commands.players_on(inst["name"])})
         return {"configured": True, "instances": result}
 
-    def get_settings(self, scope, name):
-        groups = self.commands.amp.settings(name)
+    def get_settings(self, scope, name, amp):
+        groups = amp.settings(name)
         if scope is not None:
             groups = [(title, [s for s in items if not self.bot.FRIEND_SETTINGS_DENY.search(
                 f"{s['node']} {s['name']}")]) for title, items in groups]
@@ -534,7 +567,7 @@ class MiniAppServer:
 
     def write_setting(self, identity, scope, name, p):
         node, value = p.get("node"), p.get("value")
-        allowed = {s["node"]: s for group in self.get_settings(scope, name) for s in group["items"]}
+        allowed = {s["node"]: s for group in self.get_settings(scope, name, self.commands.amp) for s in group["items"]}
         if not isinstance(node, str) or node not in allowed:
             raise APIError(403, "setting_unavailable")
         setting = allowed[node]

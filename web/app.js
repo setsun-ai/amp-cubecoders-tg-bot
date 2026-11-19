@@ -788,6 +788,11 @@ async function refresh(interactive = false) {
   state.busy = true;
   if (interactive) document.querySelector('#reload').textContent = '◌';
   try {
+    // All three at once: waiting for /api/me before asking for the data cost a whole extra round trip.
+    const ampCall = api('/api/amp/instances');
+    const dotaCall = state.me && !state.me.admin ? null : api('/api/dota');
+    // A friend gets 403 for Dota, and if /api/me fails nobody awaits the others: no unhandled rejections.
+    ampCall.catch(() => {}); dotaCall?.catch(() => {});
     const me = await api('/api/me');
     state.me = me;
     if (me.lang && me.lang !== lang) applyLanguage(me.lang);
@@ -796,8 +801,8 @@ async function refresh(interactive = false) {
       const tab = document.querySelector('[data-tab="dota"]');
       if (tab) tab.style.display = 'none';
     }
-    const tasks = [api('/api/amp/instances')];
-    if (me.admin) tasks.push(api('/api/dota'));
+    const tasks = [ampCall];
+    if (me.admin) tasks.push(dotaCall || api('/api/dota'));
     const [ampResult, dotaResult] = await Promise.allSettled(tasks);
     state.amp = ampResult.status === 'fulfilled' ? ampResult.value :
       { configured: false, instances: [], error: ampResult.reason?.message || t('amp_conn_lost') };

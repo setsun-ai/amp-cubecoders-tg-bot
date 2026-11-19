@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import hmac
 import json
@@ -173,7 +174,8 @@ def fixture():
     """)
     miniapp.ensure_schema(db)
     bot = Bot(db)
-    server = miniapp.MiniAppServer(bot, bot.commands, bot.dota, port=0)
+    server = miniapp.MiniAppServer(bot, bot.commands, bot.dota, port=0,
+                                   read_db=lambda: contextlib.nullcontext(db), web_amp=bot.commands.amp)
     yield server, db, bot
     db.close()
 
@@ -537,3 +539,54 @@ def test_the_panel_opens_in_the_language_the_user_picked_in_the_bot(fixture):
     bot.langs = {"50": "uk", "42": "en"}
     assert server.dispatch(friend_user(), "GET /api/me", {})["lang"] == "uk"
     assert server.dispatch(main_user(), "GET /api/me", {})["lang"] == "en"
+
+
+def serve(server, monkeypatch, tmp_path):
+    """The panel's HTTP listener on a free port; nobody runs the bot's main loop (no drain)."""
+    import socket
+    web = tmp_path / 'web'
+    web.mkdir()
+    for file in ('index.html', 'app.js', 'style.css'):
+        (web / file).write_text('OK')
+    server.web_dir = web
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        server.port = sock.getsockname()[1]
+    monkeypatch.setenv('MINIAPP_URL', 'https://my.ts.net')
+    assert server.start()
+    return f'http://127.0.0.1:{server.port}'
+
+
+def get(url, path, timeout=3):
+    request = urllib.request.Request(url + path, headers={'X-Telegram-Init-Data': signed()})
+    with urllib.request.urlopen(request, timeout=timeout) as result:
+        return json.loads(result.read())
+
+
+def test_the_panel_reads_without_waiting_for_the_bots_main_loop(fixture, monkeypatch, tmp_path):
+    # The main loop gets to the panel only between Telegram polls and AMP/OpenDota checks (seconds, sometimes
+    # tens of seconds); opening the panel must not wait for it.
+    server, _, _ = fixture
+    url = serve(server, monkeypatch, tmp_path)
+    try:
+        assert get(url, '/api/me')['admin'] is True
+        assert [i['name'] for i in get(url, '/api/amp/instances')['instances']] == ['Mine', 'Others']
+        assert get(url, '/api/dota')['players'][0]['name'] == 'Alice'
+        assert get(url, '/api/amp/instances/Mine/players')['players'] == ['Player 1']
+    finally:
+        server.stop()
+
+
+def test_a_read_uses_its_own_connection_that_cannot_write(fixture, monkeypatch, tmp_path):
+    import bot as real_bot
+    monkeypatch.setattr(real_bot, "DB_PATH", str(tmp_path / "players.db"))
+    db = real_bot.open_db()
+    db.execute("INSERT INTO dota(account_id,name,last_match,added,public) VALUES(7,'Bob',0,0,1)")
+    db.commit()
+    _, _, fake = fixture
+    fake.open_db = real_bot.open_db
+    server = miniapp.MiniAppServer(fake, fake.commands, fake.dota, port=0, web_amp=fake.commands.amp)
+    assert [p["name"] for p in server.read(main_user(), "/api/dota")["players"]] == ["Bob"]
+    with server.read_db() as reader, pytest.raises(sqlite3.OperationalError, match="readonly"):
+        reader.execute("DELETE FROM dota")
+    db.close()
